@@ -380,13 +380,17 @@ The payload acquisition is **gated to payload-dependent targets**
 `session-start` and `continue-workflow` for their modern `session_id`, and
 `record-human-turn` for the exact approval response. A non-empty `USER_PROMPT`
 is consumed immediately on 0.12 builds (which open stdin without ever writing);
-otherwise the adapter reads the 1.x stdin channel with a 2s broken-channel
-ceiling. Every other target touches neither channel and keeps its zero-latency
-path. The approval floor (`enforce-approval-gate`) runs on every `PreToolUse` but a read.
+otherwise the adapter reads the 1.x stdin channel until Kiro closes it, so a
+message handed over late on a busy machine is still recorded whole, with a 60 s
+safety limit for a channel that never closes. When nothing arrives at all, your
+turn is not recorded (nothing says you typed nothing) and the agent is told to
+say that the last message in this chat did not reach AI-DLC's record, so if
+it answered one of its questions, you will be asked that question again. Every other target touches neither channel and keeps
+its zero-latency path. The approval floor (`enforce-approval-gate`) runs on every `PreToolUse` but a read.
 On 1.x it reads the invoking chat's `session_id`, so concurrent chats are held
 by their own gates; the payload arrives and the channel closes with the call,
 so it does not wait on the normal path, and only a channel that never closes
-holds it until the 2s ceiling. A 0.12 payload carries no `session_id`, so the
+holds it until the 60 s safety limit. A 0.12 payload carries no `session_id`, so the
 floor uses the identity derived from the IDE host instance: every chat in that
 host shares it and is judged by the gates of the workflow it is bound to.
 
