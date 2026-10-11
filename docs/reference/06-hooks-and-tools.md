@@ -1724,7 +1724,11 @@ project's `aidlc/.aidlc-request-text/` folder, for `next --request-file`. So
 does a file-tool write of the stage's own learnings diary
 (`<record>/construction/code-generation/memory.md`, exactly, reached through no
 link): the agent appends to it while it plans, for every Unit, and the diary
-lives in the stage's folder, not the Unit's.
+lives in the stage's folder, not the Unit's. While the Code Generation step is
+current, a file-tool write under `<record>/verification/` (the phase-boundary
+verification report the governance protocol writes as Construction begins) passes
+under the same fences: it is AI-DLC's own record of a check, not source and not a
+plan-bound file; a source path in the same state is refused as before.
 
 **While the engine's recovery question is open.** When a published
 guard-recovery ask is the active directive and the person has picked a remedy,
