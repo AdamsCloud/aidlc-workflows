@@ -2017,7 +2017,29 @@ To get started:
   const checkboxesAll = parseCheckboxes(content);
   const currentCheckbox = checkboxesAll.find((c) => c.slug === currentStage);
   let statusLine = status;
-  if (currentCheckbox?.state === "awaiting-approval") {
+  // Paused work is not running. A park (the person's "approve, and stop here",
+  // or the engine's own) stands where the cursor stands, whatever the checkbox
+  // says, so it is read first; a park the work has since moved past is stale
+  // and holds nothing, the same rule the router uses (parkedWhereItStands in
+  // aidlc-orchestrate.ts). The line carries the way back, in the harness's own
+  // entry word. A live run read "Status: Running" over paused work and the
+  // agent had to correct it.
+  const parkedAt = (getField(content, "Parked At Stage") ?? "").trim();
+  const parked = (getField(content, "Parked") ?? "").trim().length > 0 &&
+    parkedAt.length > 0 && parkedAt === currentStage &&
+    status !== "Completed" && status !== "Archived";
+  if (parked) {
+    const stopped = (getField(content, "Parked By") ?? "").trim() === "person" ? " (you stopped it)" : "";
+    // Under a Unit-by-Unit Construction the cursor stays on the block's first
+    // stage while a Unit works through the later ones; the Unit's own stage
+    // (the fields unit start writes) names where the work stands.
+    const activeUnit = (getField(content, "Active Unit") ?? "").trim();
+    const unitStage = findStageBySlug((getField(content, "Unit Stage") ?? "").trim());
+    const at = activeUnit !== "" && unitStage !== undefined && unitStage.slug !== currentStage
+      ? `${stageLabel(unitStage, unitStage.slug) ?? unitStage.slug} for ${activeUnit}`
+      : currentName;
+    statusLine = `Paused at ${at}${stopped}; pick it back up with ${entrySkillInvocation()} --resume`;
+  } else if (currentCheckbox?.state === "awaiting-approval") {
     const displayName = currentName;
     statusLine = `Awaiting your approval on ${displayName}`;
     try {
