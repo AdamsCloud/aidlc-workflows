@@ -178,6 +178,7 @@ import {
   ceremonyPolicyValues,
   effectiveSupportAgents,
   effectiveSupportAgentsForProject,
+  supportAgentsAtOpenGate,
   type CheckboxLine,
   checkSummaryConfirmationEvidence,
   clearActiveDirectiveMarker,
@@ -14156,7 +14157,7 @@ function checkStageCompletionEvidence(
   // effective support list, so a lead-only run owes no contribution files.
   const effNode: GraphStage = {
     ...node,
-    support_agents: effectiveSupportAgents(node, scope, stateContent),
+    support_agents: supportAgentsAtOpenGate(pd, node, scope, stateContent),
   };
   return checkEnsembleEvidence(
     effNode,
