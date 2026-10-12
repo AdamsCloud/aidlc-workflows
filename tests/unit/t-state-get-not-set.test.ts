@@ -75,7 +75,7 @@ describe("aidlc-state get: a field the work does not set", () => {
     seedStateFile(proj, "state-initialization-done.md");
     const res = get(proj);
     expect(res.rc).toBe(1);
-    expect(JSON.parse(res.stderr.trim())).toEqual({ error: "Usage: aidlc-state.ts get <field>" });
+    expect(JSON.parse(res.stderr.trim())).toEqual({ error: "Usage: aidlc-state.ts get [--optional] <field>" });
     expect(errorRows(proj)).toBe(1);
   });
 
