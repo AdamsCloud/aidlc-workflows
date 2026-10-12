@@ -170,13 +170,13 @@ Start a new workflow with one of the enabled scopes. Core ships 11 named scopes;
 /aidlc express
 ```
 
-**Behavior:** The framework recognizes the scope keyword, asks what you want to build, then runs the Initialization phase and begins the first domain stage. If a workflow is already active, a scope keyword on its own carries on with that work, and one followed by a description asks whether the description is new work. A keyword that is also the first word of a longer description (`/aidlc classic car rental website`) is read, not assumed: the assistant works out which you meant and may ask you once, so the word is never spent on a plan you did not choose. A keyword and one word (`/aidlc bugfix typo`) is still the plan and that description, because it is also exactly what the assistant sends when you did name the plan. A colon says it is the plan and nothing else does (`/aidlc bugfix: Fix duplicate todos`), and `--scope` says the same (`/aidlc --scope bugfix Fix duplicate todos`). See [Workflow Profiles](workflow-profiles.md) for a practical comparison of all 11 choices.
+**Behavior:** The framework recognizes the scope keyword and asks what you want to build (nothing is created until you say), then runs the Initialization phase on that plan with your words as the request and begins the first domain stage. If a workflow is already active, a scope keyword on its own carries on with that work, and one followed by a description asks whether the description is new work. A keyword that is also the first word of a longer description (`/aidlc classic car rental website`) is read, not assumed: the assistant works out which you meant and may ask you once, so the word is never spent on a plan you did not choose. A keyword and one word (`/aidlc bugfix typo`) is still the plan and that description, because it is also exactly what the assistant sends when you did name the plan. A colon says it is the plan and nothing else does (`/aidlc bugfix: Fix duplicate todos`), and `--scope` says the same (`/aidlc --scope bugfix Fix duplicate todos`). See [Workflow Profiles](workflow-profiles.md) for a practical comparison of all 11 choices.
 
 **Example:**
 
 ```
 /aidlc bugfix
-> What would you like to fix?
+> I'll use the bugfix plan. What should I work on? Tell me in your own words and I'll start it.
 > The login API returns 500 when email contains a plus sign
 ```
 
@@ -980,7 +980,7 @@ The reply's first line gives the new plan's stages, how many are done, and its a
 
 Under autonomous Construction (`Construction Autonomy Mode: autonomous`, the person chose "Continue automatically"), a scope change the person asked for goes through like any other, and the remaining work keeps running automatically. A change with no request of theirs on record, or run with `AIDLC_UNATTENDED=1`, is refused (nobody is there to approve the new plan), and the refusal names `bun .claude/tools/aidlc-bolt.ts set-autonomy --mode gated`, which switches to stopping for approval at each Bolt so the change can go through. `recompose` keeps its own refusal under autonomous Construction, which names the same setter.
 
-On a fresh project with no workflow yet, `--scope <name>` starts one instead: it behaves exactly like `/aidlc <name>` — the workspace is initialized with the named scope and the workflow begins at its first stage.
+On a fresh project with no workflow yet, `--scope <name>` starts one instead: it behaves exactly like `/aidlc <name>`. Named with what to build, the workspace is initialized with the named scope and the workflow begins at its first stage; named alone, it first asks what the work is for.
 
 ---
 
