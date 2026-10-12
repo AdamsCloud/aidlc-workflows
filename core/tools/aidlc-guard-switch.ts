@@ -397,8 +397,9 @@ export function applyIntentSettings(
   const withoutPerCheckEntries = (text: string): string => {
     const off = parseGuardsOffLine(getField(text, GUARDS_OFF_FIELD));
     const on = parseGuardsOnLine(getField(text, GUARDS_ON_FIELD));
-    const keepOff = changeControl === "strict" ? off.filter((fence) => namedFences.has(fence)) : off;
-    const keepOn = changeControl === "off" ? on.filter((fence) => namedFences.has(fence)) : on;
+    const cleared = perCheckSettingClearedBy(changeControl);
+    const keepOff = cleared === "off" ? off.filter((fence) => namedFences.has(fence)) : off;
+    const keepOn = cleared === "on" ? on.filter((fence) => namedFences.has(fence)) : on;
     let updated = text;
     if (keepOff.length !== off.length) updated = setGuardsOffLine(updated, keepOff);
     if (keepOn.length !== on.length) updated = setGuardsOnLine(updated, keepOn);
@@ -916,6 +917,20 @@ interface PlanApprovalCreationGrant {
 const OPEN_QUESTION_WINDOW_MS = 60 * 60 * 1000;
 
 /**
+ * Which of a piece of work's own per-check settings a whole Guard Policy word
+ * takes back: off clears the checks kept on, strict the checks turned off, and
+ * relaxed neither. A check the same command names keeps its own setting.
+ */
+export function perCheckSettingClearedBy(policy: string | null | undefined): "on" | "off" | null {
+  return policy === "strict" ? "off" : policy === "off" ? "on" : null;
+}
+
+// Where a setting kept before any work is selected goes: the piece of work the
+// chat starts next or, with work here to pick up, whichever it picks or starts.
+const FOR_WORK_STARTED = "for the piece of work you start now";
+const FOR_WORK_PICKED_OR_STARTED = "for the work you pick up or start next";
+
+/**
  * Whether the words behind `grant` are the ones `request` carries: the question
  * they answered, or any question derived from the same request, however many
  * asks the engine made on the way (the plan proposal step, the plan question it
@@ -947,6 +962,7 @@ export function grantPlanApprovalOffAtCreation(
   sessionId: string,
   space: string | null,
   withDescription = false,
+  forNext = FOR_WORK_STARTED,
 ): TypedGuardSwitchOutcome {
   try {
     const memoryStrict = memoryGuardPolicyDeclarations(projectDir, { ...(space === null ? {} : { space }), sessionId })
@@ -961,7 +977,7 @@ export function grantPlanApprovalOffAtCreation(
   return {
     applied: true,
     lines: [
-      `Plan approval${settingPurpose("plan approval")} will be off for the piece of work you start now ` +
+      `Plan approval${settingPurpose("plan approval")} will be off ${forNext} ` +
         "(set by you). You can ask to see a plan before it is built any time.",
     ],
   };
@@ -1047,6 +1063,7 @@ export function grantGuardPolicyAtCreation(
   space: string | null,
   value: "relaxed" | "off",
   withDescription = false,
+  forNext = FOR_WORK_STARTED,
 ): TypedGuardSwitchOutcome {
   try {
     const memoryStrict = memoryGuardPolicyDeclarations(projectDir, { ...(space === null ? {} : { space }), sessionId })
@@ -1070,7 +1087,7 @@ export function grantGuardPolicyAtCreation(
     // never have met it, and the fence lines beside it say the same.
     lines: [withDescription
       ? `${guardPolicyNamed()} is ${value} for the work you are asking for (set by you).`
-      : `${guardPolicyNamed()} is ${value} for the piece of work you start now (set by you).`],
+      : `${guardPolicyNamed()} is ${value} ${forNext} (set by you).`],
   };
 }
 
@@ -1137,6 +1154,17 @@ export function recordCeremoniesAtCreation(
       earlier = readCeremoniesCreationGrant(projectDir, sessionId)?.settings ?? {};
     } catch {
       // An unreadable earlier record is replaced by this one.
+    }
+    // A later whole-policy word takes back the checks typed before it that it
+    // would clear on selected work (perCheckSettingClearedBy), as strict does in
+    // the checks' own record (withdrawFencesOffAtCreation), so work picked later
+    // never gets a check the person's later word took back.
+    const cleared = perCheckSettingClearedBy(settings["guard-policy"]);
+    if (cleared !== null) {
+      for (const fence of SWITCHABLE_GUARD_FENCES) {
+        const key = guardFenceConfigKey(fence);
+        if (fence !== "plan-approval" && earlier[key] === cleared) delete earlier[key];
+      }
     }
     const grant: CeremoniesCreationGrant = {
       version: 1,
@@ -1221,6 +1249,7 @@ export function grantFencesOffAtCreation(
   space: string | null,
   fences: readonly SwitchableGuardFence[],
   withDescription = false,
+  forNext = FOR_WORK_STARTED,
 ): TypedGuardSwitchOutcome {
   try {
     const memoryStrict = memoryGuardPolicyDeclarations(projectDir, { ...(space === null ? {} : { space }), sessionId })
@@ -1249,7 +1278,7 @@ export function grantFencesOffAtCreation(
     applied: true,
     lines: [withDescription
       ? `${checksAre(fences)} off for the work you are asking for (set by you).`
-      : `${checksAre(fences)} off for the piece of work you start now (set by you).`],
+      : `${checksAre(fences)} off ${forNext} (set by you).`],
   };
 }
 
@@ -1377,7 +1406,14 @@ export function keepSettingsForNextWork(
   requested: IntentSettingsRequest,
   space: string | null,
   fail: (message: string) => never,
+  // Work is here for the chat to pick up (workToPickUp): with no new-work
+  // question open to bind it to, the setting goes to whichever work the chat
+  // picks or starts next (keptForPickedWork), and its line says so.
+  workToPick = false,
 ): string[] {
+  const forNext = workToPick && latestFrontQuestionId(projectDir, OPEN_QUESTION_WINDOW_MS) === null
+    ? FOR_WORK_PICKED_OR_STARTED
+    : FOR_WORK_STARTED;
   const value = (key: string): string | undefined => requested[key as ConfigKey]?.value.trim().toLowerCase();
   const planApproval = value("plan-approval") ?? value("guard.plan-approval");
   const policy = value("guard-policy");
@@ -1426,35 +1462,42 @@ export function keepSettingsForNextWork(
     lines.push(...outcome.lines);
   };
   if (planApproval === "off") {
-    keep(grantPlanApprovalOffAtCreation(projectDir, sessionId, space));
+    keep(grantPlanApprovalOffAtCreation(projectDir, sessionId, space, false, forNext));
   } else if (planApproval === "on") {
     consumePlanApprovalCreationGrant(projectDir, sessionId);
-    lines.push("Plan approval will be on for the piece of work you start now (set by you).");
+    lines.push(`Plan approval will be on ${forNext} (set by you).`);
   }
   if (policy === "relaxed" || policy === "off") {
-    keep(grantGuardPolicyAtCreation(projectDir, sessionId, space, policy));
+    keep(grantGuardPolicyAtCreation(projectDir, sessionId, space, policy, false, forNext));
   } else if (policy === "strict") {
     consumeGuardPolicyCreationGrant(projectDir, sessionId);
     withdrawFencesOffAtCreation(projectDir, sessionId, SWITCHABLE_GUARD_FENCES);
-    lines.push(`${guardPolicyNamed()} will be strict for the piece of work you start now (set by you).`);
+    lines.push(`${guardPolicyNamed()} will be strict ${forNext} (set by you).`);
   }
-  if (fencesOff.length > 0) keep(grantFencesOffAtCreation(projectDir, sessionId, space, fencesOff));
+  if (fencesOff.length > 0) keep(grantFencesOffAtCreation(projectDir, sessionId, space, fencesOff, false, forNext));
   if (fencesOn.length > 0) {
     withdrawFencesOffAtCreation(projectDir, sessionId, fencesOn);
-    lines.push(`${checksAre(fencesOn)} on for the piece of work you start now (set by you).`);
+    lines.push(`${checksAre(fencesOn)} on ${forNext} (set by you).`);
   }
   // Everything kept, as typed: the ceremonies and levels creation reads back,
   // and the rest as the mark that the setter ran since the person's message.
   const kept: Record<string, string> = {};
   for (const key of Object.keys(requested)) {
     const typed = value(key);
-    if (typed !== undefined) kept[key] = typed;
+    if (typed === undefined) continue;
+    // One name for one setting, read as the setter reads it: the other name
+    // for plan approval counts when the line does not name plan-approval too.
+    if (key === "guard.plan-approval") {
+      if (requested["plan-approval"] === undefined) kept["plan-approval"] = typed;
+    } else {
+      kept[key] = typed;
+    }
   }
   recordCeremoniesAtCreation(projectDir, sessionId, kept, false);
   for (const key of [...CREATION_CEREMONY_FLAGS, "collaborators", ...KEPT_LEVEL_KEYS]) {
     const typed = kept[key];
     if (typed !== undefined) {
-      lines.push(`${KEPT_SETTING_LABELS[key]} will be ${typed} for the piece of work you start now (set by you).`);
+      lines.push(`${KEPT_SETTING_LABELS[key]} will be ${typed} ${forNext} (set by you).`);
     }
   }
   return lines;
@@ -1479,6 +1522,38 @@ export function levelsKeptForNextWork(
   } catch {
     return {};
   }
+}
+
+/**
+ * What this chat kept for the work it picks up or starts next, for work it
+ * picks: everything its line typed (the ceremonies record holds it all), as
+ * the person's, when it was typed with no new-work question open, in this
+ * sitting, and the run is attended. Kept while a new-work question was open,
+ * it is that work's; older than the sitting, it is gone, as at creation.
+ */
+export function keptForPickedWork(projectDir: string, sessionId: string | null): IntentSettingsRequest | null {
+  if (!sessionId || process.env.AIDLC_UNATTENDED === "1") return null;
+  try {
+    const grant = readCeremoniesCreationGrant(projectDir, sessionId);
+    if (grant === null || grant.request !== null || grant.withDescription === true) return null;
+    const at = Date.parse(grant.recordedAt);
+    if (Number.isNaN(at) || Date.now() - at > OPEN_QUESTION_WINDOW_MS) return null;
+    const kept: IntentSettingsRequest = {};
+    for (const [key, value] of Object.entries(grant.settings)) {
+      if ((CONFIG_KEYS as readonly string[]).includes(key)) kept[key as ConfigKey] = { value, source: "you" };
+    }
+    return Object.keys(kept).length > 0 ? kept : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Spent by the work the chat picks, as by the work it creates. */
+export function consumeKeptSettings(projectDir: string, sessionId: string): void {
+  consumePlanApprovalCreationGrant(projectDir, sessionId);
+  consumeGuardPolicyCreationGrant(projectDir, sessionId);
+  consumeFencesOffCreationGrant(projectDir, sessionId);
+  consumeCeremoniesCreationGrant(projectDir, sessionId);
 }
 
 /** Whether the setter kept something for this chat's next work at or after `at`: it ran since that message. */
