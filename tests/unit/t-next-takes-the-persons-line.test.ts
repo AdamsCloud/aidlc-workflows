@@ -17,9 +17,9 @@
 // adapter and the Claude Code dispatcher), as tests/unit/t-message-record does.
 import { NATIVE_FIXTURE_SETUP_TIMEOUT_MS } from "../harness/test-budget.ts";
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { cleanupTestProject, createOrchestrationTestProject } from "../harness/fixtures.ts";
+import { cleanupTestProject, createOrchestrationTestProject, proposalFollowUp } from "../harness/fixtures.ts";
 import {
   copilotSkillPrompt,
   type Directive,
@@ -81,7 +81,9 @@ async function next(
   } catch {
     // The caller reports the raw output.
   }
-  return { directive, out };
+  // The agent's proposal step follows the plan proposal print, as it does live.
+  const proposal = proposalFollowUp(directive);
+  return proposal === null ? { directive, out } : next(proj, harness, proposal, opts);
 }
 
 function questionFiles(proj: string): string[] {
@@ -101,7 +103,9 @@ describe("next takes the person's own /aidlc line when the agent's command carri
       expect(directive.ask_type).toBe("scope-confirm");
       expect(directive.question ?? "").toContain(WORDS);
       expect(directive.proposed_scope).toBe("bugfix");
-      expect(questionFiles(proj)).toHaveLength(1);
+      // The request the line was kept under (the agent's proposal step) and the
+      // plan question derived from it: the words were taken once.
+      expect(questionFiles(proj)).toHaveLength(2);
     });
   }
 
@@ -145,6 +149,26 @@ describe("next takes the person's own /aidlc line when the agent's command carri
     expect(questionFiles(proj)).toHaveLength(0);
   });
 
+  test("kiro-ide: `/aidlc bugfix fix the login` with a bare next reads both ways, and the pick creates bugfix with no question", async () => {
+    // The Kiro IDE first-step path (the adapter names a bare `next` for a line
+    // of words): the engine takes the person's recorded line whole, names both
+    // readings, and the agent's pick creates for the words after the plan.
+    const proj = fresh();
+    await say(proj, "/aidlc bugfix fix the login", "kiro-ide");
+    const read = await next(proj, "kiro-ide", []);
+    expect(read.directive.kind, read.out).toBe("print");
+    expect(read.directive.message ?? "").toContain("`bugfix` is the name of a plan and also the first word");
+    expect(read.directive.message ?? "").toContain("next --scope bugfix -- 'fix the login'");
+    expect(read.directive.message ?? "").toContain("next -- 'bugfix fix the login'");
+    expect(questionFiles(proj)).toHaveLength(0);
+    const { directive, out } = await next(proj, "kiro-ide", ["--scope", "bugfix", "--", "fix the login"]);
+    expect(directive.kind, out).toBe("print");
+    expect(directive.message ?? "").toContain("intent create --scope bugfix --request");
+    const dir = join(proj, "aidlc", ".aidlc-sessions", "questions");
+    const texts = questionFiles(proj).map((name) => (JSON.parse(readFileSync(join(dir, name), "utf-8")) as { text: string }).text);
+    expect(texts).toEqual(["fix the login"]);
+  });
+
   test("kiro-ide: the person's answer to the open plan question goes through the same reading as typed words", async () => {
     const proj = fresh();
     await say(proj, LINE, "kiro-ide");
@@ -160,7 +184,7 @@ describe("next takes the person's own /aidlc line when the agent's command carri
     expect(directive.message ?? "").toContain("has not answered the plan question");
     expect(directive.message ?? "").toContain(`--request ${id}`);
     expect(directive.message ?? "").toContain("go ahead");
-    expect(questionFiles(proj)).toHaveLength(1);
+    expect(questionFiles(proj)).toHaveLength(2); // the proposal step's request and the plan question; the reply adds none
   });
 
   test("kiro-ide: the question's own confirm command then creates the work for that request", async () => {
@@ -220,7 +244,7 @@ describe("next takes the person's own /aidlc line when the agent's command carri
     expect(directive.ask_type).toBe("scope-confirm");
     expect(directive.question ?? "").toContain(WORDS);
     expect(directive.proposed_scope).toBe("bugfix");
-    expect(questionFiles(proj)).toHaveLength(1);
+    expect(questionFiles(proj)).toHaveLength(2); // the proposal step's request and the plan question it derived
   });
 
   test("copilot: a wrapper that is not our skill file byte for byte is recorded as delivered, and leaves today's error", async () => {

@@ -3241,7 +3241,7 @@
       }
     },
     "unsure": true,
-    "after": "WO6"
+    "after": "pending"
   },
   {
     "id": "hs09-w",
@@ -3692,11 +3692,11 @@
         "kinds": [
           "print"
         ],
-        "words": "fix the login",
+        "words": "bugfix fix the login",
         "settings": [],
         "no_ask": true,
         "names": [
-          "--scope bugfix"
+          "--scope bugfix -- 'fix the login'"
         ]
       },
       "end": {
@@ -3735,7 +3735,7 @@
         }
       }
     },
-    "after": "pending"
+    "after": "WO6"
   },
   {
     "id": "sl11-w",
@@ -3756,8 +3756,8 @@
       }
     },
     "unsure": true,
-    "after": "pending",
-    "ambiguous": true
+    "ambiguous": true,
+    "after": "pending"
   },
   {
     "id": "rt01-f",
@@ -6386,7 +6386,7 @@
       }
     },
     "source": "FORMS.md C11",
-    "after": "WO6"
+    "after": "pending"
   },
   {
     "id": "C12a-w",
@@ -12285,8 +12285,12 @@
     "expected": {
       "engine": {
         "kinds": [
-          "ask"
+          "print"
         ],
+        "names": [
+          "--propose <plan> --request"
+        ],
+        "no_ask": true,
         "words": "build a to-do app",
         "settings": []
       },
@@ -14421,8 +14425,12 @@
     "expected": {
       "engine": {
         "kinds": [
-          "ask"
+          "print"
         ],
+        "names": [
+          "--propose <plan> --request"
+        ],
+        "no_ask": true,
         "words": "build a to-do app",
         "settings": [
           [
@@ -14477,8 +14485,12 @@
     "expected": {
       "engine": {
         "kinds": [
-          "ask"
+          "print"
         ],
+        "names": [
+          "--propose <plan> --request"
+        ],
+        "no_ask": true,
         "words": "build a to-do app",
         "settings": [
           [
@@ -16652,8 +16664,12 @@
     "expected": {
       "engine": {
         "kinds": [
-          "ask"
+          "print"
         ],
+        "names": [
+          "--propose <plan> --request"
+        ],
+        "no_ask": true,
         "words": "build the export",
         "settings": [
           [
@@ -16773,8 +16789,12 @@
     "expected": {
       "engine": {
         "kinds": [
-          "ask"
+          "print"
         ],
+        "names": [
+          "--propose <plan> --request"
+        ],
+        "no_ask": true,
         "words": "fix the parser",
         "settings": [
           [
@@ -16908,8 +16928,12 @@
     "expected": {
       "engine": {
         "kinds": [
-          "ask"
+          "print"
         ],
+        "names": [
+          "--propose <plan> --request"
+        ],
+        "no_ask": true,
         "words": "build the auth service",
         "settings": [
           [
@@ -17783,8 +17807,12 @@
     "expected": {
       "engine": {
         "kinds": [
-          "ask"
+          "print"
         ],
+        "names": [
+          "--propose <plan> --request"
+        ],
+        "no_ask": true,
         "words": "build a to-do app",
         "settings": [
           [

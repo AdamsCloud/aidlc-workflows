@@ -26,6 +26,7 @@ import {
   createOrchestrationTestProject,
   createTestProject,
   FIXTURES_DIR,
+  followProposal,
   removeWorkspaceRecord,
   runOrchestrateNext,
   seededStateFile,
@@ -71,7 +72,9 @@ interface Emitted {
 }
 
 function next(proj: string, args: string[] = []): { d: Emitted; out: string } {
-  const result = runOrchestrateNext(ORCHESTRATE, proj, args, { env: env(proj) });
+  // The agent's proposal step follows the plan proposal print, as it does live.
+  const options = { env: env(proj) };
+  const result = followProposal(runOrchestrateNext(ORCHESTRATE, proj, args, options), ORCHESTRATE, proj, options);
   expect(result.directive, result.out).not.toBeNull();
   return { d: result.directive as unknown as Emitted, out: result.out };
 }
@@ -122,8 +125,11 @@ describe("their reply to the plan offer reaches that offer", () => {
     const proj = emptyProject();
     const offer = next(proj, ["build a small notes app for my team"]);
     expect(offer.d.ask_type, offer.out).toBe("compose-offer");
-    const asked = questions(proj);
-    expect(asked.length).toBe(1);
+    // The request the words were kept under (the agent's proposal step) and the
+    // plan question derived from it.
+    expect(questions(proj).length).toBe(2);
+    const offerId = /--request ([0-9a-f]{8})/.exec(String(offer.d.compose_command))?.[1];
+    expect(offerId, offer.out).toBeDefined();
 
     const answered = next(proj, splitKiroCommandArgs(reply));
     // Not the same offer again, and never an offer about their reply.
@@ -131,9 +137,9 @@ describe("their reply to the plan offer reaches that offer", () => {
     expect(answered.d.kind, answered.out).toBe("print");
     expect(answered.d.narration, answered.out).toBeUndefined();
     // It carries that question's own commands, by its id.
-    expect(String(answered.d.message)).toContain(asked[0].id);
+    expect(String(answered.d.message)).toContain(offerId!);
     // And nothing new was asked of them.
-    expect(questions(proj).length).toBe(1);
+    expect(questions(proj).length).toBe(2);
     cleanupTestProject(created.pop());
   });
 
@@ -141,10 +147,11 @@ describe("their reply to the plan offer reaches that offer", () => {
     const proj = emptyProject();
     const offer = next(proj, ["fix the login crash when the session expires"]);
     expect(offer.d.ask_type, offer.out).toBe("scope-confirm");
-    const asked = questions(proj);
+    const offerId = /--request ([0-9a-f]{8})/.exec(String(offer.d.confirm_command))?.[1];
+    expect(offerId, offer.out).toBeDefined();
     const answered = next(proj, ["yes"]);
     expect(answered.d.kind, answered.out).toBe("print");
-    expect(String(answered.d.message)).toContain(asked[0].id);
+    expect(String(answered.d.message)).toContain(offerId!);
     expect(String(answered.d.message)).toContain("--scope");
   });
 
@@ -349,8 +356,9 @@ describe("a reply reaches no question but the one in front of them", () => {
     const second = runOrchestrateNext(ORCHESTRATE, proj, ["--scope", "poc", "build the CSV export"], {
       env: { ...env(proj), AIDLC_SESSION_OVERRIDE: "01995000-7a11-7000-8000-000000001b02" },
     });
+    // The first chat's proposal step and the plan question derived from it, then the second chat's own question.
     const asked = questions(proj);
-    expect(asked.length, second.out).toBe(2);
+    expect(asked.length, second.out).toBe(3);
 
     // A reply in the first chat must not carry the second question's id, and
     // must not start or compose the work that question asked about.

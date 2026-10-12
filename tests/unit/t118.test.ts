@@ -136,6 +136,7 @@ import {
   createOrchestrationTestProject,
   createTestProject,
   FIXTURES_DIR,
+  proposalFollowUp,
   removeWorkspaceRecord,
   REPO_ROOT,
   resetAidlcEnv,
@@ -340,6 +341,21 @@ function emitNextNoState(...args: string[]): EmitResult {
   });
   const raw = `${res.stdout ?? ""}${res.stderr ?? ""}`;
   return { status: res.status ?? -1, directive: parseDirective(res.stdout ?? ""), raw, proj };
+}
+
+// The same line, then the agent's step after the plan proposal print (the
+// test's stand-in reading of the words), on the same fresh workspace.
+function emitNextNoStateThroughProposal(...args: string[]): EmitResult {
+  const first = emitNextNoState(...args);
+  const proposal = proposalFollowUp(first.directive);
+  if (proposal === null) return first;
+  const res = spawnSync(BUN, [TOOL, "next", "--project-dir", first.proj ?? "", ...proposal], {
+    timeout: remainingOperationTimeoutMs(NATIVE_STARTUP_TIMEOUT_MS),
+    encoding: "utf-8",
+    env: cleanEnv(),
+  });
+  const raw = `${res.stdout ?? ""}${res.stderr ?? ""}`;
+  return { status: res.status ?? -1, directive: parseDirective(res.stdout ?? ""), raw, proj: first.proj };
 }
 
 // The creation print names the request by question id; the exact text lives in
@@ -582,7 +598,10 @@ describe("t118 engine differential corpus — aidlc-orchestrate next (migrated f
       expect(opening.directive.message ?? "").toContain("'classic car rental website'");
       const other = emitNextNoState("note: build a classic car site");
       expect(other.directive.message ?? "").not.toContain("intent create --scope classic");
-      expect(other.directive.kind).toBe("ask");
+      // A plan's name inside the sentence is their word: the request reaches the
+      // agent's plan proposal step, never a plan picked from it.
+      expect(other.directive.kind).toBe("print");
+      expect(other.directive.message ?? "").toContain("--propose <plan> --request");
     });
 
     // (2) Freeform (<=5-word) intent: `next add dark mode toggle` — genuine prose,
@@ -590,7 +609,9 @@ describe("t118 engine differential corpus — aidlc-orchestrate next (migrated f
     // read-only stand-in for the conductor's detect-scope + confirm). The control
     // proving the finding-2 fix narrows ONLY known-scope positionals.
     test("no-state freeform intent -> ask (scope confirmation; engine never calls AskUserQuestion)", () => {
-      const r = emitNextNoState("add", "dark", "mode", "toggle");
+      // The words reach the agent as the plan proposal step first; its plan
+      // returns the plan question (t-plan-proposed-by-the-agent).
+      const r = emitNextNoStateThroughProposal("add", "dark", "mode", "toggle");
       // .sh: assert_eq "$(json_field "$OUT" kind)" "ask"
       expect(r.directive.kind).toBe("ask");
     });

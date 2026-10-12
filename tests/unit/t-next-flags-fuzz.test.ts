@@ -79,6 +79,8 @@ const VALUED_FLAGS: Array<{ flag: string; valid: string; field: string }> = [
   { flag: "--project-type", valid: "greenfield", field: "projectType" },
   { flag: "--plan-name", valid: "my-plan", field: "planName" },
   { flag: "--request", valid: "1a2b3c4d", field: "request" },
+  // The agent's plan for a proposal step: a plan name or `compose`.
+  { flag: "--propose", valid: "bugfix", field: "propose" },
 ];
 const CEREMONY_VALUED = ["--sensors", "--learnings", "--summary-confirmation", "--collaborators", "--plan-approval"];
 const FENCE_VALUED = ["--guard.review-freeze", "--guard.state-transition", "--guard.reviewer-scope", "--guard.plan-approval"];
@@ -88,7 +90,7 @@ const BOOLEAN_FLAGS = ["--resume", "--single", "--new-intent", "--continue", "--
 // kebab word, `--request` and `--scope` any token (the route validates the
 // scope later), so no generated word is invalid for them.
 const CLOSED_VALUE_FLAGS = [
-  "--depth", "--test-strategy", "--review", "--guard-policy", "--project-type",
+  "--depth", "--test-strategy", "--review", "--guard-policy", "--project-type", "--propose",
   ...CEREMONY_VALUED, ...FENCE_VALUED,
 ];
 // Flags that read their value only when one follows, so a line ending on one
@@ -149,6 +151,8 @@ interface Case {
   untaken?: string;
   /** For a known flag: what the parse must read. */
   reads?: { field: string; value: string };
+  /** For a line opening with a plan's name: the plan the parse must pick. */
+  plan?: string;
 }
 
 const SCOPES = new Set([...validScopes()]);
@@ -182,15 +186,16 @@ function buildCase(next: () => number): Case {
       return { shape, argv: [...tail], tail };
     // The same line, as the three harnesses hand it over: the person's own
     // sentence opening with a word that is also a plan's name, split into
-    // tokens or quoted whole (both ambiguous), and the plan named in its own
-    // argument, which is the reading the orchestrator skill asks the agent for.
+    // tokens or quoted whole (both ambiguous, at any length), and the plan
+    // named in its own argument, which is the reading the orchestrator skill
+    // asks the agent for.
     case "plan-word-split": {
-      // Nothing of theirs is spent on a reading step, so the whole line is
-      // their words; with one word after the plan name it is the plan and that
-      // description, as it is in every form of the line.
       const plan = pick([...SCOPES]);
-      const words = tail.length > 1 ? [plan, ...tail] : tail;
-      return { shape, argv: [plan, ...tail], tail: words };
+      // With one word after the plan's name the line is two arguments: the
+      // plan in its own, the description in one more.
+      return tail.length > 1
+        ? { shape, argv: [plan, ...tail], tail: [plan, ...tail] }
+        : { shape, argv: [plan, ...tail], tail, plan };
     }
     case "plan-word-quoted": {
       // One argument holding the whole line: the engine never splits their
@@ -199,8 +204,10 @@ function buildCase(next: () => number): Case {
       const line = [plan, ...tail].join(" ");
       return { shape, argv: [line], tail: [line] };
     }
-    case "plan-word-named":
-      return { shape, argv: [pick([...SCOPES]), tail.join(" ")], tail: [tail.join(" ")] };
+    case "plan-word-named": {
+      const plan = pick([...SCOPES]);
+      return { shape, argv: [plan, tail.join(" ")], tail: [tail.join(" ")], plan };
+    }
     case "valued-flag": {
       const entry = pick(VALUED_FLAGS);
       const withTail = next() < 0.6;
@@ -313,7 +320,13 @@ describe("the flag parser over a seeded sweep of lines", () => {
       // does: the person meant one of them, and the agent re-runs it. With no
       // value at all it is still this engine's own refusal, by name. Never a
       // throw, and never work named after it.
-      if (testCase.shape === "bad-value" || testCase.shape === "missing-value") {
+      if (testCase.argv[0] === "--propose" && (testCase.shape === "missing-value" || (testCase.shape === "bad-value" && testCase.argv[1].startsWith("--")))) {
+        // The agent's own flag with its value missing: said to the agent by
+        // routeNext, never a parse error and never work named after it.
+        expect(parsed.propose, note).toBe("");
+        expect(parsed.parseError, note).toBeUndefined();
+        expect(parsed.intent, note).toBeUndefined();
+      } else if (testCase.shape === "bad-value" || testCase.shape === "missing-value") {
         const flag = testCase.argv[0].split("=")[0];
         const step = parsed.readingStep;
         if (step !== undefined) {
@@ -372,6 +385,17 @@ describe("the flag parser over a seeded sweep of lines", () => {
         testCase.shape !== "valueless-positional"
       ) {
         expect(parsed.intent, note).toBe(testCase.tail.join(" "));
+      }
+
+      // A plan named in its own argument is the pick of that plan; any other
+      // line opening with a plan's name is both readings, every word kept.
+      if (testCase.plan !== undefined) {
+        expect(parsed.positionalScope, note).toBe(testCase.plan);
+        expect(parsed.intent, note).toBe((testCase.tail ?? []).join(" "));
+        expect(parsed.readingStep, note).toBeUndefined();
+      } else if (testCase.shape.startsWith("plan-word")) {
+        expect(parsed.positionalScope, note).toBeUndefined();
+        expect(parsed.readingStep?.kind, note).toBe("plan-word");
       }
 
       // After the delimiter every token is theirs, word for word, and nothing
@@ -469,6 +493,10 @@ describe("the flag parser over a seeded sweep of lines", () => {
           // A sentence opening with a plan's name is the same reading step
           // either way, because it is the same line.
           expect(quoted, `quoted ${note}`).toEqual(reading);
+        } else if (SCOPES.has(testCase.argv[0])) {
+          // Split, a plan's name and one word is the plan in its own argument;
+          // quoted whole, the same line is the reading step: no count of words.
+          expect(quoted.kind, `quoted ${note}`).toBe("plan-word");
         } else {
           // Otherwise the engine cannot see a flag or a noun inside one
           // argument of theirs, so the line is their words whole, and never a
@@ -751,6 +779,66 @@ describe("ways of saying go on over a seeded sweep", () => {
       const after = runOrchestrateNext(ORCHESTRATE, proj, [], { env }).directive as Record<string, unknown>;
       expect(after.ask_type, `${note} after=${JSON.stringify(after).slice(0, 300)}`).toBe("intent-pick");
       expect(after.question, note).toBe(pick.question);
+    }
+  });
+});
+
+// On a workspace with no plan named, every words-only line is the agent's to
+// read before anything is offered: the engine keeps the request and hands the
+// plans to the agent (the proposal step), the agent answers with one exact
+// flag, and the person gets one question. No keyword in the engine picks the
+// plan, so the sweep's words can say anything. Seeded, deterministic slice.
+describe("the proposal step over a seeded slice of fresh-workspace lines", () => {
+  const FRESH_ROUTED = 6;
+  const wordsOnly = cases.filter((testCase) => testCase.shape === "words-only");
+  const slice = Array.from({ length: Math.min(FRESH_ROUTED, wordsOnly.length) }, (_unused, index) =>
+    wordsOnly[Math.floor((index * wordsOnly.length) / Math.min(FRESH_ROUTED, wordsOnly.length))]);
+  const PROPOSAL = "--propose <plan> --request";
+
+  function freshWorkspace(): string {
+    const proj = createTestProject();
+    created.push(proj);
+    removeWorkspaceRecord(proj);
+    const health = hooksHealthDir(proj);
+    mkdirSync(health, { recursive: true });
+    writeFileSync(join(health, "record-human-turn.last"), new Date().toISOString());
+    return proj;
+  }
+
+  test(`routes ${slice.length} of them: the proposal print, then the agent's plan is one question, never the print twice`, () => {
+    const plans = [...validScopes(), "compose"];
+    const pick = rng(SEED + 2);
+    for (const testCase of slice) {
+      const note = where(testCase);
+      const proj = freshWorkspace();
+      const env = {
+        ...testGuardEnvironment(process.env, "production"),
+        CLAUDE_PROJECT_DIR: proj,
+        AIDLC_PROJECT_DIR: proj,
+        AIDLC_UNATTENDED: "0",
+        AIDLC_SESSION_OVERRIDE: SESSION,
+      };
+      const before = readAuditShardEvents(proj).length;
+      const first = runOrchestrateNext(ORCHESTRATE, proj, testCase.argv, { env }).directive as Record<string, unknown>;
+      expect(first?.kind, `${note} first=${JSON.stringify(first).slice(0, 300)}`).toBe("print");
+      expect(first.ask_type, note).toBeUndefined();
+      const message = String(first.message);
+      expect(message, note).toContain(PROPOSAL);
+      expect(message, note).not.toContain("This looks like");
+      const id = /--request ([0-9a-f]{8})/.exec(message)?.[1];
+      expect(id, note).toBeDefined();
+      // The agent's plan, whichever it reads: one question for the person.
+      const plan = plans[Math.floor(pick() * plans.length)];
+      const ask = runOrchestrateNext(ORCHESTRATE, proj, ["--propose", plan, "--request", id!], { env }).directive as Record<string, unknown>;
+      expect(ask?.kind, `${note} plan=${plan} ask=${JSON.stringify(ask).slice(0, 300)}`).toBe("ask");
+      expect(ask.ask_type, note).toBe(plan === "compose" ? "compose-offer" : "scope-confirm");
+      expect(String(ask.question), note).not.toContain(PROPOSAL);
+      // The step re-run with its request is the same step, not a second copy.
+      const again = runOrchestrateNext(ORCHESTRATE, proj, ["--request", id!], { env }).directive as Record<string, unknown>;
+      expect(again, note).toEqual(first);
+      // `next` reads; it records nothing.
+      expect(readAuditShardEvents(proj).length, note).toBe(before);
+      cleanupTestProject(created.pop());
     }
   });
 });

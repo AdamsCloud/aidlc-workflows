@@ -27,7 +27,7 @@ diagnostic and lifecycle routes.
 | Command | Description |
 |---------|-------------|
 | `/aidlc [scope]` | Start a new workflow with an explicit scope |
-| `/aidlc [description]` | Start a new workflow; scope is auto-detected from your description (rich/unmatched prose gets a compose offer) |
+| `/aidlc [description]` | Start a new workflow; the agent proposes a plan from your description (or offers to compose one when none fits) |
 | `/aidlc compose "<task>"` | Force the adaptive composer: propose a tailored EXECUTE/SKIP plan for the task |
 | `/aidlc compose --report <path>` | Compose from a scan report (triage findings into a compact fix-and-ship run) |
 | `/aidlc --new-scope "<task>"` | Force the composer to synthesize a custom plan even when a stock scope matches |
@@ -143,7 +143,7 @@ flowchart TD
     style START fill:#e1bee7,stroke:#7b1fa2,color:#000
 ```
 
-<!-- Text fallback: Starting a new workflow: use /aidlc classic (known scope) or /aidlc Build a payments API (auto-detect; the first intent auto-creates). Managing an existing workflow: /aidlc (resume), /aidlc --status (view progress), /aidlc --stage (jump to stage), /aidlc --phase (jump to phase). Verify setup: /aidlc --doctor (health check). -->
+<!-- Text fallback: Starting a new workflow: use /aidlc classic (known scope) or /aidlc Build a payments API (the agent proposes a plan; the first intent auto-creates). Managing an existing workflow: /aidlc (resume), /aidlc --status (view progress), /aidlc --stage (jump to stage), /aidlc --phase (jump to phase). Verify setup: /aidlc --doctor (health check). -->
 
 ---
 
@@ -181,9 +181,9 @@ Start a new workflow with one of the enabled scopes. Core ships 11 named scopes;
 
 ---
 
-### `/aidlc [description]` — Start with auto-detection
+### `/aidlc [description]` — Start from a description
 
-Describe what you want to build and the engine auto-detects the appropriate scope.
+Describe what you want to build and the agent proposes the plan that fits it; the engine asks you to confirm it.
 
 **Syntax:**
 
@@ -192,13 +192,13 @@ Describe what you want to build and the engine auto-detects the appropriate scop
 /aidlc Fix the login timeout bug
 ```
 
-**Behavior:** The engine analyzes keywords in your description (e.g., "fix" suggests bugfix). A clear match asks a one-line confirm naming the MATCHED scope and its effective ceremony (stage count, approval-gate count, and any per-unit fan-out, all from the compiled grid). Greenfield work excludes reverse engineering, and a per-unit clause appears only when `units-generation` runs and creates a Unit DAG. Rich or unmatched prose gets the compose offer (see `/aidlc compose` below) instead of a silent default. You confirm or override before the workflow begins.
+**Behavior:** The agent reads your description and proposes the plan that fits it (a bug report usually gets bugfix); the engine asks a one-line confirm naming that plan and its effective ceremony (stage count, approval-gate count, and any per-unit fan-out, all from the compiled grid). Greenfield work excludes reverse engineering, and a per-unit clause appears only when `units-generation` runs and creates a Unit DAG. When no ready-made plan fits, you get the compose offer (see `/aidlc compose` below) instead of a silent default. You confirm or override before the workflow begins. A description that opens with a plan's name keeps every word (`/aidlc classic car rental website` is about a car rental website): the agent reads whether that word names the plan.
 
 **Example** (a new project; on an existing codebase bugfix also runs Reverse Engineering, so the line says 6 stages and 6 approval gates):
 
 ```
 /aidlc Fix the ProfileSerializer null pointer
-> This looks like "bugfix" work, so I'd run the "bugfix" plan for: "Fix the ProfileSerializer null pointer" - 5 stages, 5 approval gates; no learnings ritual or summary confirmation; lead agent only. Do you want me to go ahead with it, use a different plan, or tailor one to this task?
+> I'd run the "bugfix" plan for: "Fix the ProfileSerializer null pointer" - 5 stages, 5 approval gates; no learnings ritual or summary confirmation; lead agent only. Do you want me to go ahead with it, use a different plan, or tailor one to this task?
 ```
 
 **A request no shell can carry.** On Windows, cmd.exe ends a command at a line
@@ -2827,7 +2827,7 @@ Pre-set the implicit scope for a project. The resolver reads the real environmen
 
 **Valid values:** `enterprise`, `feature`, `mvp`, `poc`, `bugfix`, `refactor`, `infra`, `security-patch`, `classic`, `workshop`, `express`.
 
-**Precedence:** explicit CLI flag > keyword detection > real `AWS_AIDLC_DEFAULT_SCOPE` environment variable > recorded default-scope flag > `classic`. Record a shared default with `aidlc config flags --default-scope feature --project --yes`, or use `--local` for this checkout. A real environment value, including the shipped settings env entry, wins over either record.
+**Precedence:** explicit CLI flag > the plan the agent proposed and you confirmed > real `AWS_AIDLC_DEFAULT_SCOPE` environment variable > recorded default-scope flag > `classic`. Record a shared default with `aidlc config flags --default-scope feature --project --yes`, or use `--local` for this checkout. A real environment value, including the shipped settings env entry, wins over either record.
 
 **Scope of effect:** applies at workflow initialization only. Once the intent's `aidlc-state.md` exists, the state file is authoritative. See [Customization § Per-Project Default Scope](13-customization.md#per-project-default-scope) for the full walkthrough.
 
