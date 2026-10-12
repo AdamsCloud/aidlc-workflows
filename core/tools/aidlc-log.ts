@@ -1394,7 +1394,7 @@ function handleAnswers(args: string[]): void {
       const paired = !cycle && candidates.length > 0 && candidates.every((question) =>
         !uncertain.has(question) &&
         attemptEventDefinitelyBefore(question, answer) &&
-        // A tied cancellation carries no answer, so it never competes with one.
+        // A tied answer with no words carries no answer, so it never competes with one.
         ![...pending].some(
           (other) => other !== answer && !isNonAnswer(auditBlockField(other.block, "Details")) &&
             couldOwn(question, other) && !attemptEventDefinitelyBefore(answer, other),
@@ -1954,7 +1954,7 @@ function handleAnswer(args: string[]): void {
   }
   // --details names the choice the person made, which the conductor read from
   // their reply; the engine records it beside their own words and never reads
-  // meaning into them. A dismissed widget keeps its own refusal below.
+  // meaning into them. An answer with no words keeps its own refusal below.
   const reply = flags.details;
   if ((policyCheckpoint || verificationCheckpoint) && !isNonAnswer(reply)) {
     const picked = offeredChoiceLabel(reply, APPROVAL_GATE_CHOICES);
@@ -2044,13 +2044,12 @@ function handleAnswer(args: string[]): void {
     }
   }
 
-  // A cancelled/dismissed/auto-resolved question widget is not an answer.
-  // Some harnesses return a completed-looking object for a dismissed question.
+  // A reply with no words in it is nobody's answer.
   if (isNonAnswer(flags.details)) {
     error(
-      `Cannot record reply ${formatReceivedReply(flags.details)} because it represents a ` +
-        `dismissed question, not a human answer. Re-present the question and wait for a real ` +
-        `response before trying again.`,
+      `Cannot record reply ${formatReceivedReply(flags.details)} because it has no words in it. ` +
+        "Pass the choice the person made, as you read it from their reply; with no reply of theirs yet, " +
+        "show the question again and wait for one.",
     );
   }
 
@@ -2139,7 +2138,7 @@ function handleAnswer(args: string[]): void {
       flags.single === "true" ? `single-stage:${flags.stage}` : undefined;
 
     // Authorship floor (issue 742): the same interview answer the conductor
-    // wrote for itself. isNonAnswer above rejects a DISMISSED widget; this
+    // wrote for itself. isNonAnswer above rejects an answer with no words; this
     // rejects a self-attributed one ("A. Nothing to add - CONDUCTOR DEFAULT,
     // session unattended"), which the presence check below cannot catch because
     // a human is in the session, just not at this question. Autonomous
