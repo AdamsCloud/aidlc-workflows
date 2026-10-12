@@ -1136,6 +1136,77 @@ describe("t299 first-run setup wizard", () => {
     expect(existsSync(join(unsupported.project, ".kiro", "agents", "aidlc.json"))).toBe(true);
   }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
 
+  // A supported Kiro CLI is detected by both Kiro rows. Enter takes the
+  // kiro-ide row, whose settings/cli.json pins the v3 engine; the kiro row
+  // stays one number away. Injected detection runs on every platform.
+  test("a Kiro CLI both Kiro rows detect defaults to the row that pins the v3 engine", () => {
+    const result = runWizard("\n\n", {
+      harnesses: {
+        claude: { found: false },
+        kiro: { found: true, version: "kiro-cli 2.28.0" },
+        "kiro-ide": { found: true, version: "kiro-cli 2.28.0" },
+      },
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("Choose the harness for this project first.");
+    expect(result.stdout).toContain(`    5. Kiro CLI${" ".repeat(8)}(detected)\n`);
+    expect(result.stdout).toContain(`    6. Kiro IDE${" ".repeat(8)}(detected, default)\n`);
+    expect(result.stdout).toContain("Using Kiro IDE.");
+    const kiroDir = join(result.project, ".kiro");
+    expect(existsSync(join(kiroDir, "agents", "aidlc-aidlc.md"))).toBe(true);
+    expect(existsSync(join(kiroDir, "agents", "aidlc.json"))).toBe(false);
+    const cli = JSON.parse(readFileSync(join(kiroDir, "settings", "cli.json"), "utf-8"));
+    expect(cli["chat.agentEngine"]).toBe("v3");
+  }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
+
+  test("Enter with both Kiro rows detected keeps Kiro auto, and writes no effort for a saved model", () => {
+    const bothKiro = {
+      claude: { found: false },
+      kiro: { found: true, version: "kiro-cli 2.28.0" },
+      "kiro-ide": { found: true, version: "kiro-cli 2.28.0" },
+    };
+    // Kiro auto: Enter at the picker, the defaults and the model list keeps it.
+    const auto = kiroSeam({});
+    const onAuto = runWizard("\n\n\n", { harnesses: bothKiro, env: auto.env });
+    expect(onAuto.status, onAuto.stdout + onAuto.stderr).toBe(0);
+    expect(onAuto.stdout).toContain(`    6. Kiro IDE${" ".repeat(8)}(detected, default)\n`);
+    expect(onAuto.stdout).toContain("Choose the Kiro CLI session model (Enter keeps Kiro auto):");
+    expect(onAuto.stdout).toContain("Model [4]:");
+    expect(kiroWrites(auto.writes)).toEqual([]);
+
+    // A saved model is kept, and no preset effort is written for it.
+    const saved = kiroSeam({ "chat.defaultModel": "claude-opus-5" });
+    const kept = runWizard("\n\n", { harnesses: bothKiro, env: saved.env });
+    expect(kept.status, kept.stdout + kept.stderr).toBe(0);
+    expect(kept.stdout).toContain("Using Kiro IDE.");
+    // Neither the keep-or-choose question nor the model list.
+    expect(kept.stdout).not.toContain("Kiro CLI runs each AI-DLC session on one model.");
+    expect(kept.stdout).not.toMatch(/model \[/i);
+    expect(kiroWrites(saved.writes)).toEqual([]);
+  }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
+
+  test("the Kiro row preference leaves an earlier harness the default and the kiro row one number away", () => {
+    const bothKiro = {
+      kiro: { found: true, version: "kiro-cli 2.28.0" },
+      "kiro-ide": { found: true, version: "kiro-cli 2.28.0" },
+    };
+    const withClaude = runWizard("\n\n", {
+      harnesses: { claude: { found: true, version: "claude 2.1.220" }, ...bothKiro },
+    });
+    expect(withClaude.status, withClaude.stdout + withClaude.stderr).toBe(0);
+    expect(withClaude.stdout).toContain(`    1. Claude Code     (detected, default)\n`);
+    expect(withClaude.stdout).toContain(`    5. Kiro CLI${" ".repeat(8)}(detected)\n`);
+    expect(withClaude.stdout).toContain(`    6. Kiro IDE${" ".repeat(8)}(detected)\n`);
+    expect(withClaude.stdout).toContain("Using Claude Code.");
+    expect(existsSync(join(withClaude.project, ".kiro"))).toBe(false);
+
+    const legacy = runWizard("5\n\n", { harnesses: { claude: { found: false }, ...bothKiro } });
+    expect(legacy.status, legacy.stdout + legacy.stderr).toBe(0);
+    expect(legacy.stdout).toContain(`    6. Kiro IDE${" ".repeat(8)}(detected, default)\n`);
+    expect(legacy.stdout).toContain("Using Kiro CLI.");
+    expect(existsSync(join(legacy.project, ".kiro", "agents", "aidlc.json"))).toBe(true);
+  }, NATIVE_FIXTURE_SETUP_TIMEOUT_MS);
+
   test("Kiro IDE's terminal selects Kiro IDE and ends with trust, reload, and agent steps", () => {
     const result = runWizard("\n", {
       harnesses: { claude: { found: false } },

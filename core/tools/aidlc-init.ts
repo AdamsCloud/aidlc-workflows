@@ -7657,6 +7657,17 @@ function detectedCandidateChoices(
   const detected = candidates.filter((candidate) =>
     detection.harnesses[candidate.stamp.distribution]?.found
   );
+  // Both Kiro rows count a supported `kiro-cli`. The kiro-ide row pins Kiro's
+  // v3 engine in its settings/cli.json and the kiro row pins none, so Kiro
+  // picks that row's engine; when both are found, kiro-ide comes first of the
+  // two. Every other harness keeps its order, and the editor lead below still
+  // comes first.
+  const kiro = detected.findIndex((candidate) => candidate.stamp.distribution === "kiro");
+  const kiroIde = detected.findIndex((candidate) => candidate.stamp.distribution === "kiro-ide");
+  if (kiro !== -1 && kiroIde > kiro) {
+    const [preferred] = detected.splice(kiroIde, 1);
+    detected.splice(kiro, 0, preferred);
+  }
   // In the terminal of a harness's own editor, that harness leads: it is
   // chosen outright when no other harness CLI is found, and is the default
   // when one is.

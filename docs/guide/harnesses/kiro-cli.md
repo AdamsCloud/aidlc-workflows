@@ -7,6 +7,15 @@
 > IDE-targeted distribution is documented separately in
 > [Running AI-DLC on Kiro IDE](kiro-ide.md).
 
+> [!IMPORTANT]
+> This page covers the legacy `kiro` row, which pins no Kiro engine. On Kiro
+> CLI 2.24.1 or later, use the `kiro-ide` row instead: it pins Kiro's v3
+> engine and runs in Kiro CLI as well as Kiro IDE, and the interactive
+> `aidlc config` prefers it to this row when both are detected. This row stays for
+> older Kiro CLI versions and existing projects. In an existing `kiro`
+> project, `aidlc config --harness kiro-ide` switches `.kiro/` to it in place
+> and keeps `aidlc/`.
+
 One of the framework's harnesses: the Kiro runtime runs the same AI-DLC
 methodology on [Kiro CLI](https://kiro.dev/docs/cli/). One deterministic core
 — the tools, 33 stage files, protocols, knowledge, sensors, scopes, and rules
@@ -16,7 +25,8 @@ configs, hook wiring, activation) differs.
 Harness-specific onboarding lives in `.kiro/steering/aidlc-onboarding.md`,
 loaded through the conductor agent's `resources`. The root `AGENTS.md` block
 is harness-neutral and shared with other installed harnesses; engine directories
-must still differ (Kiro CLI and Kiro IDE cannot share one `.kiro/` install).
+must still differ (the `kiro` and `kiro-ide` rows cannot share one `.kiro/`
+install).
 
 ## Prerequisites
 
