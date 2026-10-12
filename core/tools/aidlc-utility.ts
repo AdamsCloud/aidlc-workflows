@@ -50,10 +50,13 @@ import {
   consumeFencesOffCreationGrant,
   consumeGuardPolicyCreationGrant,
   consumePlanApprovalCreationGrant,
+  fenceMemoryLockRefusal,
   fencesOffCreationGranted,
   guardPolicyCreationGranted,
   formatPlanApprovalSetting,
   type IntentSettingsRequest,
+  keepSettingsForNextWork,
+  levelsKeptForNextWork,
   parseReviewOverride,
   planApprovalCreationGranted,
   planApprovalMemoryLockRefusal,
@@ -165,6 +168,9 @@ import {
   scopeDefinitionGuardPolicy,
   GUARD_FENCES,
   type GuardSwitch,
+  guardFenceConfigKey,
+  SWITCHABLE_GUARD_FENCES,
+  type SwitchableGuardFence,
   entrySkillInvocation,
   fenceKeyBypassed,
   guardSwitchRefusal,
@@ -7900,6 +7906,14 @@ function handleIntentCreate(projectDir: string, flags: Record<string, string>): 
     if (!question) die(QUESTION_UNAVAILABLE);
     flags.arguments = question.text;
     flags.scope ||= question.proposedScope;
+    // Depth, test strategy and review the person set in this chat before any
+    // work existed, kept by the setter for the request this creation answers
+    // (keepSettingsForNextWork in aidlc-guard-switch.ts); a flag the command
+    // carries wins.
+    const kept = levelsKeptForNextWork(projectDir, session ?? null, questionId);
+    if (flags.depth === undefined && kept.depth !== undefined) flags.depth = kept.depth;
+    if (flags["test-strategy"] === undefined && kept["test-strategy"] !== undefined) flags["test-strategy"] = kept["test-strategy"];
+    if (flags.review === undefined && kept.review !== undefined) flags.review = kept.review;
   }
   // Creation mutates the registry and active cursor. Refuse an invocation that
   // carries no meaningful scope or description instead of minting a default
@@ -7949,6 +7963,18 @@ function handleIntentCreate(projectDir: string, flags: Record<string, string>): 
     );
   }
   const requestedCeremony = parseCeremonyOverrides(flags);
+  // A check typed on or off for this work (`--guard.review-freeze off`): the
+  // person's, and off is a lowering under the rule plan approval off follows.
+  const fenceFlags: Partial<Record<SwitchableGuardFence, "on" | "off">> = {};
+  for (const fence of SWITCHABLE_GUARD_FENCES) {
+    if (fence === "plan-approval") continue;
+    const raw = flags[guardFenceConfigKey(fence)];
+    if (raw === undefined) continue;
+    const value = parseCeremonySetting(raw);
+    if (value === null) die(`--${guardFenceConfigKey(fence)} requires <on|off>; received "${raw}".`);
+    fenceFlags[fence] = value;
+  }
+  const fencesTypedOff = SWITCHABLE_GUARD_FENCES.filter((fence) => fenceFlags[fence] === "off");
   // A plan composed for this piece of work: the scope's grid with its own stage
   // changes. Checked here, before any mutation, so a refused plan creates nothing.
   const planChanges: PlanChanges = {
@@ -8012,7 +8038,7 @@ function handleIntentCreate(projectDir: string, flags: Record<string, string>): 
     ? fencesOffCreationGranted(projectDir, initialSelection.sessionId, questionId ?? null) : [];
   consumeFencesOffCreationGrant(projectDir, initialSelection.sessionId);
   const wantedChangeControl = flaggedChangeControl ?? guardPolicyAsked;
-  const guardPolicySetByPerson = guardPolicyAsked !== null && wantedChangeControl === guardPolicyAsked;
+  let guardPolicySetByPerson = guardPolicyAsked !== null && wantedChangeControl === guardPolicyAsked;
   const requestedChangeControl =
     wantedChangeControl !== "strict" && wantedChangeControl === scopeDefaultPolicy ? null : wantedChangeControl;
   // Plan approval off is the person's move too. Naming the scope's own default
@@ -8034,6 +8060,15 @@ function handleIntentCreate(projectDir: string, flags: Record<string, string>): 
   // the creation sets: their words, so the work says they set it.
   const ceremoniesAsked = ceremoniesCreationGranted(projectDir, initialSelection.sessionId, questionId ?? null);
   consumeCeremoniesCreationGrant(projectDir, initialSelection.sessionId);
+  // The settings the person typed as flags on their latest line in this chat
+  // (the message record, as the engine's own parser read it): a flag this
+  // creation carries with the same value is theirs when the creation answers a
+  // request of theirs. A creation that names no request takes nobody's words.
+  const typedSettings = questionId !== undefined
+    ? latestMessage(projectDir, initialSelection.sessionId)?.settings ?? []
+    : [];
+  const typedByPersonFlag = (key: string, value: string): boolean =>
+    typedSettings.some((setting) => setting.key === key && setting.value === value);
   for (const key of CEREMONY_KEYS) {
     if (key === "plan_approval") continue;
     // Their words carry the value, the way plan approval does above: a ceremony
@@ -8044,7 +8079,10 @@ function handleIntentCreate(projectDir: string, flags: Record<string, string>): 
     if (requestedCeremony[key] === undefined && ceremoniesAsked[key] !== undefined) {
       requestedCeremony[key] = ceremoniesAsked[key];
       ceremonySetByPerson[key] = true;
-    } else if (requestedCeremony[key] !== undefined && requestedCeremony[key] === ceremoniesAsked[key]) {
+    } else if (
+      requestedCeremony[key] !== undefined &&
+      (requestedCeremony[key] === ceremoniesAsked[key] || typedByPersonFlag(CEREMONY_FLAGS[key].slice(2), requestedCeremony[key]!))
+    ) {
       ceremonySetByPerson[key] = true;
     }
   }
@@ -8073,13 +8111,25 @@ function handleIntentCreate(projectDir: string, flags: Record<string, string>): 
   // it is nobody's word: the setting stays "set by a command".
   const loweringAuthorized = (): boolean =>
     personAskedForThisLowering() || fenceKeyBypassed(projectDir, initialSelection.sessionId);
+  // A check typed off is the person's call too, under the same rule. A team's
+  // strict Guard Policy keeps it on, as it keeps a check granted before the
+  // work existed (fencesAsked above): the work is created with the check on,
+  // and the person hears why, once, on the step after creation.
+  const teamKeptCheck = preflightMemoryStrict !== null && fencesTypedOff.length > 0
+    ? fenceMemoryLockRefusal(preflightMemoryStrict, fencesTypedOff[0]) : null;
+  if (fencesTypedOff.length > 0 && teamKeptCheck === null) {
+    const wanted: GuardSwitch = { key: `guard.${fencesTypedOff[0]}`, value: "off" };
+    if (process.env.AIDLC_UNATTENDED === "1") die(guardSwitchRefusal(wanted));
+    if (!loweringAuthorized()) die(guardSwitchRefusal(wanted, projectDir));
+    for (const fence of fencesTypedOff) if (!fencesAsked.includes(fence)) fencesAsked.push(fence);
+  }
   if (requestedCeremony.plan_approval === "off") {
     if (preflightMemoryStrict !== null) die(planApprovalMemoryLockRefusal(preflightMemoryStrict.path));
     if (scopeCeremonyDefault("plan_approval", scope) !== "off" && ceremonySetByPerson.plan_approval !== true) {
       const wanted: GuardSwitch = { key: "plan-approval", value: "off" };
       // An unattended driver never lowers a check, whoever asked.
       if (process.env.AIDLC_UNATTENDED === "1") die(guardSwitchRefusal(wanted));
-      if (!loweringAuthorized()) die(guardSwitchRefusal(wanted, false, projectDir));
+      if (!loweringAuthorized()) die(guardSwitchRefusal(wanted, projectDir));
       if (personAskedForThisLowering()) ceremonySetByPerson.plan_approval = true;
     }
   }
@@ -8091,7 +8141,9 @@ function handleIntentCreate(projectDir: string, flags: Record<string, string>): 
     const wanted: GuardSwitch = { key: "guard-policy", value: requestedChangeControl };
     // An unattended driver never lowers fences, including a recorded presence bypass.
     if (process.env.AIDLC_UNATTENDED === "1") die(guardSwitchRefusal(wanted));
-    if (!loweringAuthorized()) die(guardSwitchRefusal(wanted, false, projectDir));
+    if (!loweringAuthorized()) die(guardSwitchRefusal(wanted, projectDir));
+    // Their word authorized it, so the work records it as theirs.
+    if (personAskedForThisLowering()) guardPolicySetByPerson = true;
   }
   // A flat aidlc-docs/ layout is migrated into the DEFAULT space by the first
   // creation (below, under the lock). An explicit other space cannot be honored
@@ -8396,11 +8448,15 @@ function handleIntentCreate(projectDir: string, flags: Record<string, string>): 
       ceremonySetByPerson,
       composedPlan ? plannedStages.stages : null,
     );
-    // The checks the person turned off for this work start off, set by them.
-    if (fencesAsked.length > 0 && lockedMemoryStrict === null) {
+    // The checks the person turned off for this work start off, set by them;
+    // one they typed on starts on.
+    const requested: IntentSettingsRequest = {};
+    for (const fence of fencesAsked) requested[`guard.${fence}`] = { value: "off", source: "you" };
+    for (const fence of SWITCHABLE_GUARD_FENCES) {
+      if (fenceFlags[fence] === "on") requested[`guard.${fence}`] = { value: "on", source: "you" };
+    }
+    if (Object.keys(requested).length > 0 && lockedMemoryStrict === null) {
       const content = readStateFile(projectDir, created.dirName, created.space);
-      const requested: IntentSettingsRequest = {};
-      for (const fence of fencesAsked) requested[`guard.${fence}`] = { value: "off", source: "you" };
       const update = applyIntentSettings(projectDir, content, requested, {
         intent: created.dirName, space: created.space, sessionId: initialSelection.sessionId, typedByPerson: true,
       });
@@ -8418,6 +8474,9 @@ function handleIntentCreate(projectDir: string, flags: Record<string, string>): 
       questionId,
     );
     failIntentCreateAt("after-list");
+    if (teamKeptCheck !== null && initialSelection.sessionId) {
+      addPendingPersonLines(projectDir, initialSelection.sessionId, [teamKeptCheck]);
+    }
     // This chat is now on the work it just created: anything it was still owed
     // (the creation line naming what the person set for this work) follows it.
     carryPendingPersonLines(projectDir, initialSelection.sessionId);
@@ -12387,6 +12446,17 @@ function handleConfigChange(projectDir: string, flags: Record<string, string>): 
   const selection = resolveWorkflowSelection(projectDir, { intent: flags.intent, space: flags.space });
   const intent = selection.intent ?? undefined;
   const space = selection.space;
+  // No work selected for this chat yet: the setting is kept for the piece of
+  // work it starts next, and said once (keepSettingsForNextWork). A terminal
+  // with no chat has nothing to keep it for, and a piece of work named on the
+  // command (`--intent <name>`) that is not there is still the missing-work
+  // error: nothing was typed for work the chat is about to start.
+  if (!existsSync(stateFilePath(projectDir, intent, space))) {
+    if (!selection.sessionId || flags.intent !== undefined || selection.intent !== null) die(NO_STATE_FILE_MESSAGE);
+    const lines = keepSettingsForNextWork(projectDir, selection.sessionId, intentSettingsFromFlags(flags), space, die);
+    process.stdout.write(`${lines.join("\n")}\n`);
+    return;
+  }
   withAuditLock(projectDir, () => {
     const content = readConfigState(projectDir, { intent, space });
     const update = applyIntentSettings(projectDir, content, intentSettingsFromFlags(flags), {

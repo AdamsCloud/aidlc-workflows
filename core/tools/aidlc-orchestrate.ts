@@ -171,6 +171,7 @@ import {
   CEREMONY_FLAGS,
   CEREMONY_KEYS,
   guardFenceFromConfigKey,
+  guardPolicyMemoryStrictRefusal,
   memoryGuardPolicyDeclarations,
   SWITCHABLE_GUARD_FENCES,
   type SwitchableGuardFence,
@@ -210,7 +211,6 @@ import {
   withWorkspaceSourceStateCache,
   guardRecoveryAskFromRefusalText,
   guardPolicyStateField,
-  parseGuardPolicyStateLine,
   SKELETON_STANCES,
   guardRefusalStreakView,
   pendingGuardRecoveryAsk,
@@ -262,6 +262,7 @@ import {
   maximalAttemptEvents,
   resolveReviewClass,
   loadScopeMapping,
+  scopeGuardPolicyDefault,
   nextInScopeStage,
   stageReopenedByScopeChange,
   openPendingDecision,
@@ -273,8 +274,12 @@ import {
   noteGuardPolicyRename,
   humanPresenceGuardDisabled,
   isNonAnswer,
+  commandAtPersonsTerminal,
   personSpokeSinceGate,
   planApprovalAskIsOpen,
+  planApprovalRuntimeFile,
+  readPlanApprovalRuntimeRecord,
+  writePlanApprovalRuntimeRecord,
   recordDir,
   renderReviewRequestCommand,
   type FreshReviewReceipts,
@@ -325,7 +330,6 @@ import {
   stageJumpReaches,
   resolveBoltDag,
   unitsBlockRepair,
-  CHECK_GLOSS,
   GUARD_POLICY_GLOSS,
   SCOPE_GLOSS,
   type BoltDagResolution,
@@ -508,13 +512,13 @@ import {
 } from "./aidlc-testing-posture.ts";
 import {
   checksAre,
-  checksNamed,
-  fencesOffCreationGranted,
-  guardPolicyCreationGranted,
+  fenceMemoryLockRefusal,
   guardPolicyNamed,
+  planApprovalMemoryLockRefusal,
   planApprovalOffAtCreation,
   planApprovalEnv,
   planApprovalOffForOpenRequest,
+  settingsKeptSince,
   switchKeptForNextWork,
   resolvePlanApprovalSetting,
 } from "./aidlc-guard-switch.ts";
@@ -2408,6 +2412,13 @@ function carriedCreationFlags(flags: ParsedFlags): string {
   if (flags.testStrategy) carried.push(`--test-strategy ${flags.testStrategy}`);
   if (flags.projectType) carried.push(`--project-type ${flags.projectType}`);
   carried.push(...carriedCeremonyFlags(flags));
+  // A Guard Policy or a check typed with the work is that work's: it rides the
+  // answer commands to creation, which takes it once the person has asked in
+  // this chat (handleIntentCreate), as plan approval off does.
+  if (flags.changeControl) carried.push(`--guard-policy ${flags.changeControl}`);
+  for (const fence of SWITCHABLE_GUARD_FENCES) {
+    if (flags.fences?.[fence]) carried.push(`--guard.${fence} ${flags.fences[fence]}`);
+  }
   return carried.length > 0 ? ` ${carried.join(" ")}` : "";
 }
 
@@ -2436,15 +2447,6 @@ function resumeAgain(flags: ParsedFlags): string {
   return ["next --resume", ...typedSettingModifiers(flags).map((modifier) => `--${modifier}`)].join(" ");
 }
 
-// A typed `guard-policy <value>` the state already holds as set by you.
-function typedPolicyApplied(modifier: string, stateContent: string): boolean {
-  const [key, value] = modifier.split(" ");
-  if (key !== "guard-policy") return false;
-  const field = guardPolicyStateField(stateContent);
-  const line = parseGuardPolicyStateLine(field === null ? null : getField(stateContent, field));
-  return line !== null && line.value === value && line.source === "you";
-}
-
 function configSetCommand(modifiers: string[]): string {
   return [
     aidlcDispatcherInvocation(`config set ${modifiers[0]}`),
@@ -2455,9 +2457,8 @@ function configSetCommand(modifiers: string[]): string {
 // Settings typed with a description while other work exists ride on each
 // answer to the routing question, so they land on the work the person picks.
 // New work is also created with the review level and Guard Policy typed with
-// it. A lowered Guard Policy rides only to the new-work answers,
-// which never try it there: the person's own words already set it on the
-// active work as they sent the message, and the creation says where it landed.
+// it; a lowered one is the new work's when the person typed it in this chat
+// (routedGuardPolicyRides), and the creation says where it landed.
 interface RoutingCarried {
   /** What a plan offer carries: the composer plans new work with these. */
   creation: string;
@@ -2480,15 +2481,10 @@ function guardPolicyLowered(flags: ParsedFlags): boolean {
 }
 
 function carriedRoutingFlags(flags: ParsedFlags): RoutingCarried {
+  // Review rides every answer; a Guard Policy or a check typed with the request
+  // rides in the creation flags (carriedCreationFlags).
   const extra: string[] = [];
   if (flags.review) extra.push(`--review ${flags.review}`);
-  // The human-turn hook keeps a lowered Guard Policy typed with the request
-  // off the open work, so it rides every answer and lands on the work picked.
-  if (flags.changeControl) extra.push(`--guard-policy ${flags.changeControl}`);
-  // So does a check typed with it.
-  for (const fence of SWITCHABLE_GUARD_FENCES) {
-    if (flags.fences?.[fence]) extra.push(`--guard.${fence} ${flags.fences[fence]}`);
-  }
   const existingWork = `${carriedCreationFlags(flags)}${extra.length > 0 ? ` ${extra.join(" ")}` : ""}`;
   const stages: string[] = [];
   if (flags.planChanges?.skip.length) stages.push(`--skip ${flags.planChanges.skip.join(",")}`);
@@ -3079,13 +3075,27 @@ function openQuestionReplyDirective(stage: string, block: string, requestId: str
 // Prose while the engine's code plan question is open: the conductor reads
 // whether it answers that question (or, while the person edits the files,
 // says they are done), the same split as openQuestionReplyDirective.
-function openPlanQuestionReplyDirective(editing: boolean, requestId: string, undo = ""): PrintDirective {
+function openPlanQuestionReplyDirective(
+  editing: boolean,
+  requestId: string,
+  undo = "",
+  settings: string[] = [],
+): PrintDirective {
   const orchestrate = aidlcToolInvocation("orchestrate");
+  // Settings typed on the same line ("/aidlc --guard-policy off approve the
+  // plan"): for the work in progress when the words answer its question, so the
+  // agent runs the setter the engine names first; for the new work when the
+  // words describe it, where the routing answer carries them.
+  const typed = settings.length > 0
+    ? ` The line also carries ${settings.map((modifier) => `\`--${modifier}\``).join(" ")}: if the words answer the ` +
+      `question, those settings are for this work, so run \`${configSetCommand(settings)}\` first and print its output ` +
+      "verbatim; if the words are new work, the settings ride with them."
+    : "";
   const answer = editing
-    ? `The person is editing the code plan files themselves. If their reply says they are done, run bare \`${orchestrate} next\`.`
+    ? `The person is editing the code plan files themselves. If their reply says they are done, run bare \`${orchestrate} next\`.${typed}`
     : "The code plan question is open, and the person's reply may answer it. Read it. If it does, record the choice " +
       `they made with \`${aidlcToolInvocation("log")} answer --stage code-generation --checkpoint plan-approval ` +
-      `--details "<their choice>"\`, then run bare \`${orchestrate} next\`.`;
+      `--details "<their choice>"\`, then run bare \`${orchestrate} next\`.${typed}`;
   return printDirective(
     `${undo}${answer} If it is about something else, such as new work or a change to the plan, run ` +
       `\`${orchestrate} next --request ${requestId}\` and follow what it returns: the engine kept their words and asks ` +
@@ -4886,8 +4896,8 @@ function createPrintDirective(
   flags: ParsedFlags,
   projectDir: string,
   description?: string,
-  // New work picked on a routing question: a lowered Guard Policy typed with
-  // the request is never tried on it, and the person hears where it landed.
+  // New work picked on a routing question: what the person hears about a
+  // lowered Guard Policy typed with the request (routedGuardPolicyNote).
   routedGuardPolicyNote?: string,
 ): PrintDirective {
   const cmd = [`--scope ${scopeArg(scope)}`];
@@ -4911,8 +4921,15 @@ function createPrintDirective(
   if (flags.testStrategy) cmd.push(`--test-strategy ${flags.testStrategy}`);
   if (flags.projectType) cmd.push(`--project-type ${flags.projectType}`);
   if (flags.review) cmd.push(`--review ${flags.review}`);
-  if (flags.changeControl && !(routedGuardPolicyNote && guardPolicyLowered(flags))) {
+  // A lowered Guard Policy typed with routed new work rides to creation when it
+  // is the person's (routedGuardPolicyRides); otherwise the routed note says
+  // where it stands.
+  if (flags.changeControl && !(routedGuardPolicyNote && guardPolicyLowered(flags) && !routedGuardPolicyRides(flags, projectDir))) {
     cmd.push(`--guard-policy ${flags.changeControl}`);
+  }
+  // A check typed with the work: creation takes it under the person-turn rule.
+  for (const fence of SWITCHABLE_GUARD_FENCES) {
+    if (flags.fences?.[fence]) cmd.push(`--guard.${fence} ${flags.fences[fence]}`);
   }
   for (const key of CEREMONY_KEYS) {
     if (flags.ceremony?.[key]) cmd.push(`${CEREMONY_FLAGS[key]} ${flags.ceremony[key]}`);
@@ -5001,24 +5018,32 @@ function activeWorkLabel(stateContent: string): string {
     "the active workflow";
 }
 
-// New work picked on a routing question with a lowered Guard Policy: the
-// person's own words set it, as they sent the message, on the work the
-// question was about, so the new work starts at its default. Said about that
-// work, read from its own state (not whatever is selected by the answer).
+// A lowered Guard Policy typed with a request is the new work's, as a check
+// typed off is (routedFencesNote): with a message of the person's in this chat
+// it rides the creation command, and creation applies it once under the
+// person-turn rule (handleIntentCreate). A team's strict Guard Policy keeps it
+// off the new work, which is created at strict.
+function routedGuardPolicyRides(flags: ParsedFlags, projectDir: string): boolean {
+  return personAskedInThisChat(projectDir) && teamKeepsTyped(flags, projectDir) === null;
+}
+
+// New work picked on a routing question with a lowered Guard Policy: what the
+// person hears. Theirs, it is said once with where it landed; a value the new
+// work's plan already has is nothing new and goes unsaid. Under a team's strict
+// Guard Policy, the team's line. With no message of theirs in this chat it is
+// not tried on the new work: the person hears where it stands and is asked,
+// about the work the question was about, read from its own state (not whatever
+// the answer selects).
 function routedGuardPolicyNote(flags: ParsedFlags, projectDir: string, question: StoredQuestion): string {
   if (!guardPolicyLowered(flags)) return "";
   const value = flags.changeControl as string;
-  // Typed with the new work, it is that work's: creation applies the words the
-  // human-turn hook kept for this chat.
-  let session: string | null = null;
-  try {
-    session = resolveInvokingSessionId(projectDir);
-  } catch {
-    session = null;
-  }
-  if (guardPolicyCreationGranted(projectDir, session, question.id) === value) {
+  const team = teamKeepsTyped(flags, projectDir);
+  if (team !== null) return team;
+  if (personAskedInThisChat(projectDir)) {
     // What the setting does comes with its name, as it does on the check line beside it.
-    return `${guardPolicyNamed()} is ${value} for the new work (set by you).`;
+    return flags.scope !== undefined && scopeGuardPolicyDefault(flags.scope) === value
+      ? ""
+      : `${guardPolicyNamed()} is ${value} for the new work (set by you).`;
   }
   const target = question.askedAbout?.targets.length === 1 ? question.askedAbout.targets[0] : undefined;
   let askedState: string | null = null;
@@ -5053,36 +5078,63 @@ function routedGuardPolicyNote(flags: ParsedFlags, projectDir: string, question:
       `Do you want ${value} for it?`;
 }
 
-// New work picked on a routing question with checks typed off: the person's
-// words typed with the request are that work's, and creation applies them.
-function routedFencesNote(flags: ParsedFlags, projectDir: string, question: StoredQuestion): string {
-  const typed = SWITCHABLE_GUARD_FENCES.filter((fence) => flags.fences?.[fence] === "off");
-  if (typed.length === 0) return "";
+// New work picked on a routing question with a lowered Guard Policy or a check
+// typed off with the request: the flag rides the answer command and creation
+// takes it when the person asked in this chat (their turn, or their message
+// before any work exists, is the proof: handleIntentCreate), so the line says
+// so. With no word of theirs on record, creation refuses with its own line. A
+// team's strict Guard Policy keeps the checks, and the person heard so when
+// they typed it.
+function personAskedInThisChat(projectDir: string): boolean {
+  if (commandAtPersonsTerminal()) return true;
+  if (loadStateFileIfPresent(projectDir) !== null) {
+    return personSpokeSinceGate(projectDir, { requests: true, outlivesApproval: true });
+  }
   let session: string | null = null;
   try {
     session = resolveInvokingSessionId(projectDir);
   } catch {
     session = null;
   }
-  const kept = fencesOffCreationGranted(projectDir, session, question.id);
-  const off = typed.filter((fence) => kept.includes(fence));
-  const on = typed.filter((fence) => !kept.includes(fence));
-  const lines = off.length > 0 ? [`${checksAre(off)} off for the new work (set by you).`] : [];
-  // A team's strict Guard Policy keeps them on, and the person heard so when they typed it.
+  return session !== null && latestMessage(projectDir, session) !== null;
+}
+
+// A team that holds Guard Policy strict in memory keeps every check on for
+// everyone on the repo, and the setter refuses a lowering under it. A lowering
+// the person typed on their line is not handed to the setter for that refusal,
+// whose output the agent would print as it came: `next` says the team's line
+// itself, as the person heard it when they typed it. Null when nothing typed
+// lowers a check, no team holds strict, or memory cannot be read (the setter
+// then says what is wrong).
+function teamKeepsTyped(flags: ParsedFlags, projectDir: string): string | null {
+  const fence = SWITCHABLE_GUARD_FENCES.find((candidate) =>
+    candidate !== "plan-approval" && flags.fences?.[candidate] === "off");
+  const planApprovalOff = flags.ceremony?.plan_approval === "off" || flags.fences?.["plan-approval"] === "off";
+  if (!guardPolicyLowered(flags) && fence === undefined && !planApprovalOff) return null;
+  let held: ReturnType<typeof memoryGuardPolicyDeclarations>[number] | undefined;
+  try {
+    held = memoryGuardPolicyDeclarations(projectDir, { sessionId: resolveInvokingSessionId(projectDir) ?? undefined })
+      .find((declaration) => declaration.value === "strict");
+  } catch {
+    return null;
+  }
+  if (held === undefined) return null;
+  if (guardPolicyLowered(flags)) return guardPolicyMemoryStrictRefusal(held);
+  if (fence !== undefined) return fenceMemoryLockRefusal(held, fence);
+  return planApprovalMemoryLockRefusal(held.path);
+}
+
+function routedFencesNote(flags: ParsedFlags, projectDir: string): string {
+  const typed = SWITCHABLE_GUARD_FENCES.filter((fence) => flags.fences?.[fence] === "off");
+  if (typed.length === 0 || !personAskedInThisChat(projectDir)) return "";
   let locked = false;
   try {
-    locked = memoryGuardPolicyDeclarations(projectDir, { sessionId: session ?? undefined })
+    locked = memoryGuardPolicyDeclarations(projectDir, { sessionId: resolveInvokingSessionId(projectDir) ?? undefined })
       .some((declaration) => declaration.value === "strict");
   } catch {
     locked = true;
   }
-  if (on.length > 0 && !locked) {
-    const named = checksNamed(on);
-    const gloss = on.length === 1 ? ` (${CHECK_GLOSS[on[0]]})` : "";
-    lines.push(`The new work starts with the ${named}${gloss} on, not off as you typed with the request. ` +
-      `Do you want ${on.length === 1 ? "it" : "them"} off?`);
-  }
-  return lines.join(" ");
+  return locked ? "" : `${checksAre(typed)} off for the new work (set by you).`;
 }
 
 // The composer-dispatch print for a compose request (the adaptive-workflows
@@ -7625,9 +7677,22 @@ function takePersonsOwnLine(flags: ParsedFlags, pd: string): void {
   const carriesNothing = Object.entries(flags).every(([key, value]) =>
     key === "scope" || key === "positionalScope" || value === undefined || value === false);
   if (!carriesNothing) return;
-  if (loadStateFileIfPresent(pd) !== null) return;
   const message = latestMessage(pd, engineSessionId);
-  if (message === null || message.source !== "prompt" || message.words === null) return;
+  if (message === null || message.source !== "prompt") return;
+  const stateContent = loadStateFileIfPresent(pd);
+  if (message.words !== null) {
+    // Their words name work; with work selected, the agent's bare `next` is
+    // the work in hand.
+    if (stateContent !== null) return;
+  } else {
+    // A line of settings alone ("/aidlc --plan-approval off"): `next` names the
+    // setter for it, with or without work, once. After the setter has run (its
+    // rows follow the turn, or its record is newer than the message) a bare
+    // `next` is the work's again.
+    if (message.settings.length === 0) return;
+    if (lineHandedOut(pd, engineSessionId, message.id)) return;
+    if (stateContent !== null ? !turnIsLatestRow(pd, message.id) : settingsKeptSince(pd, engineSessionId, message.at)) return;
+  }
   const typed = aidlcEntryWords(message.text);
   if (typed === null || typed.length === 0) return;
   const own = parseNextFlags(splitKiroCommandArgs(typed));
@@ -7637,6 +7702,55 @@ function takePersonsOwnLine(flags: ParsedFlags, pd: string): void {
   if (own.intent !== undefined && wordsAlreadyRead(pd, own.intent, message.at)) return;
   for (const key of Object.keys(flags)) delete (flags as unknown as Record<string, unknown>)[key];
   Object.assign(flags, own);
+}
+
+// A settings-only line is handed out once, and `next`, which hands it out,
+// keeps the mark: whatever the setter then says (changed, already so, refused)
+// or whether it ran at all, the bare `next` after it is the work's again.
+// Without the mark a setter that changed nothing wrote no row, the person's
+// turn stayed the latest row, and the same print came back forever. The mark
+// is written whichever way the line reached `next`: the agent passed it (its
+// `next $ARGUMENTS`) or takePersonsOwnLine took it (a bare `next`). One record
+// per chat, overwritten by the next line handed out.
+interface HandedOutLine {
+  version: 1;
+  session: string;
+  messageId: string;
+}
+function handedOutLinePath(pd: string, session: string): string {
+  const segment = session.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
+  return planApprovalRuntimeFile(pd, `line-handed-out-${segment}.json`);
+}
+function lineHandedOut(pd: string, session: string, messageId: string): boolean {
+  const record = readPlanApprovalRuntimeRecord<HandedOutLine>(handedOutLinePath(pd, session), "handed-out line");
+  return record?.version === 1 && record.session === session && record.messageId === messageId;
+}
+function handOutSettingsLine(flags: ParsedFlags, pd: string): void {
+  if (engineSessionId === undefined || isReadOnlyEngineProbe()) return;
+  if (typedSettingModifiers(flags).length === 0) return;
+  const message = latestMessage(pd, engineSessionId);
+  if (message === null || message.source !== "prompt" || message.words !== null || message.settings.length === 0) return;
+  markLineHandedOut(pd, engineSessionId, message.id);
+}
+function markLineHandedOut(pd: string, session: string, messageId: string): void {
+  try {
+    const record: HandedOutLine = { version: 1, session, messageId };
+    writePlanApprovalRuntimeRecord(pd, handedOutLinePath(pd, session), `${JSON.stringify(record)}\n`);
+  } catch (e) {
+    recordHookDrop(pd, "line-handed-out", errorMessage(e));
+  }
+}
+
+// The latest row of the chat's record is the person's turn that carries this
+// message: nothing has run since they spoke.
+function turnIsLatestRow(pd: string, messageId: string): boolean {
+  try {
+    const rows = readAuditShardEvents(pd);
+    const last = rows[rows.length - 1];
+    return last !== undefined && last.event === "HUMAN_TURN" && auditBlockField(last.block, "Message Id") === messageId;
+  } catch {
+    return false;
+  }
 }
 
 // The `next` handler reads workflow state and emits exactly one directive. A
@@ -7652,6 +7766,7 @@ function routeNext(args: string[], projectDir: string | undefined): void {
   activeRetiredGuardPolicyNotice = null;
   const flags = parseNextFlags(args);
   takePersonsOwnLine(flags, resolveProjectDir(projectDir));
+  handOutSettingsLine(flags, resolveProjectDir(projectDir));
   pickingUp = flags.resume === true;
 
   // Turn-shape marker: a `next` that ASKS FOR THE NEXT MOVE is engagement with
@@ -8256,10 +8371,10 @@ function routeNext(args: string[], projectDir: string | undefined): void {
   }
 
   // Branch 1b2 - the typed settings form (`config set|get|list ...`). A person
-  // who typed `/aidlc config set guard.state-transition off` has already had
-  // the prompt-time hook apply that switch; the words are a setting, never a
-  // task description, so they must not draw the new-work offer or resume the
-  // stage. Execute the canonical config route before returning the terminal
+  // who typed `/aidlc config set guard.state-transition off` typed the setter
+  // itself: the words are a setting, never a task description, so they must
+  // not draw the new-work offer or resume the stage. A refusal reaches the
+  // agent as its plain line (toolErrorMessage), never the setter's JSON. Execute the canonical config route before returning the terminal
   // response: argv-only Stop classification is safe only once the requested
   // operation has actually finished. The setter reports an already-applied
   // switch as a no-op and still refuses lowering on its own.
@@ -8875,7 +8990,7 @@ function routeNext(args: string[], projectDir: string | undefined): void {
       pd,
       description,
       routed?.origin === "routing"
-        ? [routedGuardPolicyNote(flags, pd, routed), routedFencesNote(flags, pd, routed)].filter(Boolean).join(" ")
+        ? [routedGuardPolicyNote(flags, pd, routed), routedFencesNote(flags, pd)].filter(Boolean).join(" ")
         : undefined,
     ));
     return;
@@ -8963,10 +9078,7 @@ function routeNext(args: string[], projectDir: string | undefined): void {
     // the person named the stages, so no approval re-asks it. Any scope or
     // setting change in the same command runs first.
     const planChanges = flags.planChanges;
-    // A Guard Policy typed with the command was applied by the human-turn
-    // hook as the message arrived, and its note says what changed; naming the
-    // setter again would only tell the person it is "already" so.
-    const modifiers = typedSettingModifiers(flags).filter((modifier) => !typedPolicyApplied(modifier, stateContent));
+    const modifiers = typedSettingModifiers(flags);
     // A scope-change requires a VALID --scope that DIFFERS from the active
     // workflow's scope. Otherwise state remains authoritative and any supplied
     // settings still take the config-only path below.
@@ -9021,6 +9133,19 @@ function routeNext(args: string[], projectDir: string | undefined): void {
     // whose step Current Stage does not show (see withWorkPicksUpLine).
     const pickedUpIfTurnEnds = (print: PrintDirective): PrintDirective =>
       withWorkPicksUpLine(print, pd, currentStateScope, stateContent, !turnEndingPrints.has(print));
+    const teamKeeps = modifiers.length > 0 && !describedWork && !planChanges ? teamKeepsTyped(flags, pd) : null;
+    if (teamKeeps !== null) {
+      withdrawSettingWords(pd);
+      const said = `Run nothing. Tell the person in one line: "${teamKeeps}"`;
+      emit(keptWhilePlanWaits(
+        pickedUpIfTurnEnds(settingPrint(
+          stillParked === null ? `${said} Then stop.` : `${said}, followed by "${stillParked}", and stop.${resumeOnYes()}`,
+          `${said} Then re-run next to carry on with the work.`,
+        )),
+        planApprovalAskIsOpen(pd),
+      ));
+      return;
+    }
     if (modifiers.length > 0 && !describedWork) {
       const command = configSetCommand(modifiers);
       withdrawSettingWords(pd);
@@ -9038,23 +9163,6 @@ function routeNext(args: string[], projectDir: string | undefined): void {
     if (planChanges) {
       withdrawSettingWords(pd);
       emit(planChangeDirective(planChanges, null, plan, planApprovalAskIsOpen(pd), stillParked));
-      return;
-    }
-    // Only a setting the hook already applied was typed: the command is done,
-    // and no stage work starts from it.
-    if (!describedWork && !flags.resume && typedSettingModifiers(flags).length > 0) {
-      withdrawSettingWords(pd);
-      emit(keptWhilePlanWaits(
-        pickedUpIfTurnEnds(
-          settingPrint(
-            stillParked === null
-              ? "The setting the person typed is already applied: say the line it printed, then stop."
-              : `The setting the person typed is already applied: say the line it printed followed by "${stillParked}", then stop.${resumeOnYes()}`,
-            "The setting the person typed is already applied: say the line it printed, then re-run next to carry on with the work.",
-          ),
-        ),
-        planApprovalAskIsOpen(pd),
-      ));
       return;
     }
   }
@@ -9240,6 +9348,28 @@ function routeNext(args: string[], projectDir: string | undefined): void {
   // carried words never reaches this error: takePersonsOwnLine read that line
   // in the agent's place at the top of routeNext.
   if (!stateContent) {
+    // A setting typed with no work selected for this chat is the setter's to
+    // keep for the piece of work this chat starts next (keepSettingsForNextWork
+    // in aidlc-guard-switch.ts): the agent runs it and says its line, before
+    // anything else, so it is never lost behind the question of which work to
+    // pick up. A step, not an error. Where work is here to pick from, the agent
+    // asks the engine again and the person gets that question in the same turn.
+    const typedBeforeWork = typedSettingModifiers(flags);
+    const settingBeforeWork = typedBeforeWork.length > 0 && !flags.intent && !flags.resume;
+    const pickFollows = settingBeforeWork && unselectedRecords(pd) !== null;
+    const thenWait = pickFollows ? "re-run next and follow what it returns." : "wait for them to say what to build.";
+    const teamKeepsBeforeWork = settingBeforeWork ? teamKeepsTyped(flags, pd) : null;
+    if (teamKeepsBeforeWork !== null) {
+      const said = `Run nothing. Tell the person in one line: "${teamKeepsBeforeWork}" Then ${thenWait}`;
+      emit(pickFollows ? printDirective(said) : turnEndingPrint(said));
+      return;
+    }
+    if (settingBeforeWork) {
+      const kept = `Run \`${configSetCommand(typedBeforeWork)}\` to keep these settings for the piece of work the person starts ` +
+        `next, then print its output verbatim and ${thenWait}`;
+      emit(pickFollows ? printDirective(kept) : turnEndingPrint(kept));
+      return;
+    }
     // Work in progress here with none selected (a teammate's fresh clone, or a
     // conversation that has not joined the record it found) is put to the
     // person by name, never answered as if there were none.
@@ -9361,7 +9491,7 @@ function routeNext(args: string[], projectDir: string | undefined): void {
           pd, flags.intent, "", "routing", { space: selection.space, targets: routingTargets() }, false, undefined,
           undefined, routingSettings(carriedRoutingFlags(flags)),
         );
-        emit(openPlanQuestionReplyDirective(planQuestion.editing, words.id, undo));
+        emit(openPlanQuestionReplyDirective(planQuestion.editing, words.id, undo, typedSettingModifiers(flags)));
         return;
       }
     }
