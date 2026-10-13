@@ -531,6 +531,7 @@ import {
   type GuardPreflightResult,
   failedCheckNotices,
   guardPreflight as stateGuardPreflight,
+  leftOutNotice,
   parkWorkflow,
 } from "./aidlc-state.ts";
 import { inspectStageValidity, stageLabel, staleStageNote } from "./aidlc-validity.ts";
@@ -10018,11 +10019,15 @@ function applyGateOnlyShape(
   if (gateNode) {
     const scope = getField(stateContent, "Scope")?.trim() ?? "";
     const unitFolders = isPerUnit(gateNode) && !usesStageLevelPerUnitArtifacts(scope, stateContent);
-    const line = producedLine(gateNode, directive.unit ?? null, unitFolders, projectDir);
-    // A check that still fails on a declared output is said with the gate, on
-    // its own line after what the stage produced: the narration is the
-    // person's line, and the produced sentence stays whole.
-    const narration = [line, failedCheckNotices(projectDir, gateNode, directive.unit ?? null).join(" ")].filter(Boolean).join("\n");
+    const unit = directive.unit ?? null;
+    const line = producedLine(gateNode, unit, unitFolders, projectDir);
+    // What the person left out of the build, and a check that still fails on
+    // a declared output, are said with the gate, each on its own line after
+    // what the stage produced: the narration is the person's line, and the
+    // produced sentence stays whole.
+    const narration = [
+      line, leftOutNotice(projectDir, gateNode, unit), failedCheckNotices(projectDir, gateNode, unit).join(" "),
+    ].filter(Boolean).join("\n");
     if (narration) directive.narration = narration;
   }
   directive.protocol_modules = (directive.protocol_modules ?? []).filter(
@@ -15854,11 +15859,12 @@ function handleReport(args: string[], projectDir: string | undefined): void {
               : `Recorded ${flags.result} for unit "${unit}" of "${slug}".` +
                 personsFeedbackSentence(personsFeedback),
           );
-      // A check that still fails on a declared output is said with the gate,
-      // as the person's line beside the question, never as a change line.
+      // What the person left out of the Unit's build, and a check that still
+      // fails on a declared output, are said with the gate, as the person's
+      // lines beside the question, never as a change line.
       if (unitReply.kind === "print" && (flags.result === "awaiting-approval" || flags.result === "revised")) {
-        const checks = failedCheckNotices(pd, node, unit);
-        if (checks.length > 0) unitReply.narration = checks.join(" ");
+        const lines = [leftOutNotice(pd, node, unit), failedCheckNotices(pd, node, unit).join(" ")].filter(Boolean);
+        if (lines.length > 0) unitReply.narration = lines.join("\n");
       }
       emit(withChangeNotices(unitReply, changeNotices));
       return;
@@ -16113,11 +16119,13 @@ function handleReport(args: string[], projectDir: string | undefined): void {
         const gateState = loadStateFileIfPresent(pd);
         const unitFolders = isPerUnit(node) && !usesStageLevelPerUnitArtifacts(scope, gateState);
         const line = producedLine(node, unit, unitFolders, pd);
-        // A check that still fails on a declared output is said with the gate,
-        // on its own line after what the stage produced: the narration is the
-        // person's line (the produced sentence stays whole), and the change
-        // lines stay what changed.
-        const narration = [line, failedCheckNotices(pd, node, unit).join(" ")].filter(Boolean).join("\n");
+        // What the person left out of the build, and a check that still fails
+        // on a declared output, are said with the gate, each on its own line
+        // after what the stage produced: the narration is the person's line
+        // (the produced sentence stays whole), and the change lines stay what
+        // changed.
+        const narration = [line, leftOutNotice(pd, node, unit), failedCheckNotices(pd, node, unit).join(" ")]
+          .filter(Boolean).join("\n");
         if (narration) gateReply.narration = narration;
       }
     }

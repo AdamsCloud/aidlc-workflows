@@ -51,6 +51,7 @@ import {
   constructionPolicyChangeAuthority,
   CONSTRUCTION_POLICY_RECOVERY,
   latestPersonTurn,
+  leftOutLine,
   auditShardName,
   appendSlug,
   appendUnderHeading,
@@ -6304,6 +6305,20 @@ export function failedCheckNotices(pd: string, stage: GateStage, unit: string | 
   const more = failed.length - lines.length;
   if (more > 0) lines.push(`${more} more check${more === 1 ? " reports" : "s report"} findings on this stage's outputs.`);
   return lines;
+}
+
+// What the person asked to leave out of a build (#1342), said once with the
+// approval: the `Deferred` items in the gate's traceability.json files (the
+// stage writes one per Unit, a Unit's gate reads its own). A stage that builds
+// no code says nothing (its `Deferred` means a later stage covers the item).
+// Said with Sensors off too: it is the record, not a check.
+export function leftOutNotice(pd: string, stage: GateStage, unit: string | null = null): string | null {
+  if (stage.workspace_requires !== true) return null;
+  try {
+    return leftOutLine(declaredOutputsForGate(pd, stage, unit).filter((path) => basename(path) === "traceability.json"));
+  } catch {
+    return null;
+  }
 }
 
 // A stage artifact may list the decisions only the person can make in a fenced
