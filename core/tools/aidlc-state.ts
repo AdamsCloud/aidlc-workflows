@@ -190,6 +190,7 @@ import {
   resolveWorkflowSelection,
   sourceClaimCovers,
   aidlcOwnedSourceKey,
+  onlyAidlcFilesChangedSince,
   sourceBaselineAuditFields,
   sourceListingEntriesEqual,
   resolveProjectDir,
@@ -3391,7 +3392,11 @@ function verifySettledSwarmSourceBinding(
     );
   }
   const current = workspaceSourceState(pd);
-  if (current !== null && !sameWorkspaceSource(chain.fingerprint, current.fingerprint) && guardPolicyAcceptsChanges(pd)) {
+  // An AI-DLC update the person took after the last merge changed only
+  // AI-DLC's own files: nobody's source moved.
+  const moved = current !== null && !sameWorkspaceSource(chain.fingerprint, current.fingerprint) &&
+    !onlyAidlcFilesChangedSince(pd, stage.slug, chain.listing, current);
+  if (moved && current !== null && guardPolicyAcceptsChanges(pd)) {
     // Kept under relaxed or off: edits made after the last merge stay, once recorded.
     if (changeControlPreflight) return;
     const notices = recordAcceptedChanges(pd, [{
@@ -3402,7 +3407,7 @@ function verifySettledSwarmSourceBinding(
     if (notices.length > 0) console.log(JSON.stringify({ change_notices: notices }));
     return;
   }
-  if (current === null || !sameWorkspaceSource(chain.fingerprint, current.fingerprint)) {
+  if (current === null || moved) {
     error(
       `Refusing to complete "${stage.slug}": the main checkout source no longer matches the final reviewed swarm merge (source-fingerprint mismatch). Revert the unreviewed edit or restart and re-review the affected Bolt.`,
     );
@@ -3415,8 +3420,13 @@ function priorAcceptedSourceFields(
 ): Record<string, string> {
   if (stage.workspace_requires !== true) return {};
   const chain = currentSwarmSourceMergeChain(pd, stage.slug);
+  // The listing the last landing kept goes with it, so the next attempt's
+  // first landing can tell an AI-DLC update from a change to source.
   return chain.state === "ready"
-    ? { "Prior Accepted Source Fingerprint": chain.fingerprint }
+    ? {
+        "Prior Accepted Source Fingerprint": chain.fingerprint,
+        ...(chain.listing === undefined ? {} : { "Prior Accepted Source Listing": chain.listing }),
+      }
     : {};
 }
 
