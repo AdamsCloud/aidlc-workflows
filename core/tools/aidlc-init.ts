@@ -14,7 +14,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractTarGz } from "./aidlc-archive.ts";
@@ -179,6 +179,7 @@ import {
   kiroRateLabel,
   type KiroSessionPlan,
   type KiroSessionResult,
+  kiroEnv,
   listKiroModels,
   readKiroPersonalSession,
   recommendedKiroModel,
@@ -6308,6 +6309,76 @@ function mergeKiroMcpServers(
   return owned;
 }
 
+// The person's own Kiro MCP settings, read and never written. Under the test
+// runner only a KIRO_HOME the test names is read, never the host's ~/.kiro.
+function personalKiroMcpPath(env: NodeJS.ProcessEnv = process.env): string | null {
+  const home = kiroEnv(env).KIRO_HOME;
+  if (!home && env.AIDLC_TEST_NAME !== undefined) return null;
+  return join(home || join(homedir(), ".kiro"), "settings", "mcp.json");
+}
+
+// Kiro CLI offers an agent only the MCP servers its tools name, one
+// `@<server>` each; it has no grant for every server (measured on Kiro CLI
+// 2.29.0: `@*`, `@mcp` and `@*/*` grant nothing, and `*` adds built-in tools).
+// So the AI-DLC agent's staged copy names every server config finds in the
+// project's mcp.json and in the person's own, and allowedTools stays as
+// shipped, so each call still asks first. A server added later is named at
+// the next config run. True when the project's copy is the release's own
+// bytes (a copy install puts them there before config runs), so the named copy
+// replaces it; any other copy meets the ownership check.
+function grantKiroMcpServers(projectDir: string, sourceRoot: string, stagedRoot: string, harnessDir: string): boolean {
+  const rel = `${harnessDir}/agents/aidlc.json`;
+  const agentPath = join(stagedRoot, rel);
+  const names = new Set<string>();
+  const personal = personalKiroMcpPath();
+  for (const path of [join(stagedRoot, harnessDir, "settings", "mcp.json"), personal]) {
+    // The person's own file may be a link (a dotfiles folder): follow it.
+    const file = path === personal
+      ? path !== null && statSync(path, { throwIfNoEntry: false })?.isFile() === true
+      : path !== null && regularFile(path);
+    if (path === null || !file) continue;
+    try {
+      const servers = (readJsonFile(path) as Record<string, unknown>).mcpServers;
+      if (isRecord(servers)) for (const name of Object.keys(servers)) names.add(name);
+    } catch {
+      // A file Kiro cannot read names no server.
+    }
+  }
+  // The agent file travels with the project (a team's clone), so a server it
+  // already names stays named: a teammate's run adds theirs and keeps yours.
+  // Kiro ignores a grant for a server it does not have.
+  const current = join(projectDir, rel);
+  if (regularFile(current)) {
+    try {
+      const tools = (JSON.parse(withoutBom(readFileSync(current, "utf-8"))) as Record<string, unknown>).tools;
+      if (Array.isArray(tools)) {
+        for (const tool of tools) if (typeof tool === "string" && tool.startsWith("@")) names.add(tool.slice(1));
+      }
+    } catch {
+      // A copy config cannot read keeps no grant; the ownership check reports it.
+    }
+  }
+  if (!regularFile(agentPath)) return false;
+  const agentText = readFileSync(agentPath, "utf-8");
+  let agent: unknown;
+  try {
+    agent = JSON.parse(withoutBom(agentText));
+  } catch {
+    return false;
+  }
+  if (!isRecord(agent) || !Array.isArray(agent.tools)) return false;
+  const tools = [
+    ...agent.tools.filter((tool) => typeof tool !== "string" || !tool.startsWith("@")),
+    ...[...names].map((name) => `@${name}`),
+  ];
+  if (canonical(tools) === canonical(agent.tools)) return false;
+  writeFileSync(agentPath, jsonFileText({ ...agent, tools }, agentText));
+  const release = join(sourceRoot, rel);
+  if (!regularFile(current) || !regularFile(release)) return false;
+  const releaseHash = sha256File(release);
+  return sha256Matching(readFileSync(current), [releaseHash]) === releaseHash;
+}
+
 function preserveUserProviderFields(
   projectDir: string,
   stagedRoot: string,
@@ -6432,10 +6503,10 @@ function prepareRefreshSource(
     ? join(currentHarness, "settings.json")
     : descriptor.distribution === "codex"
     ? join(currentHarness, "config.toml")
-    : descriptor.distribution === "kiro"
-    ? join(currentHarness, "settings", "mcp.json")
     : null;
+  // Kiro CLI always stages: its MCP servers are merged and granted per project.
   if (
+    descriptor.distribution !== "kiro" &&
     !prior &&
     !regularFile(currentHarnessData) &&
     !(currentConfiguration && pathPresent(currentConfiguration)) &&
@@ -6679,6 +6750,9 @@ function prepareRefreshSource(
       const rel = `${descriptor.harnessDir}/settings/mcp.json`;
       regenerated.add(rel);
       if (entries) entries[rel] = owned;
+    }
+    if (!projectProjection && grantKiroMcpServers(projectDir, sourceRoot, root, descriptor.harnessDir)) {
+      regenerated.add(`${descriptor.harnessDir}/agents/aidlc.json`);
     }
   }
 
