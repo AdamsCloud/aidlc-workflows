@@ -214,7 +214,7 @@ export const ENGINE_NAMESPACE_HELP: NamespaceHelpOptions = {
 export const SYSTEM_NAMESPACE_HELP: NamespaceHelpOptions = {
   namespace: "system",
   usage: "aidlc system <noun> <verb> [args]",
-  header: "Operations on this user's aidlc installation; never a system-wide or root install:",
+  header: "Operations on this user's aidlc installation; never system-wide (root only with --allow-root):",
 };
 
 // ROUTES_TABLE_START
@@ -498,7 +498,7 @@ export const ROUTES: readonly Route[] = [
     mutationScope: "machine",
     outputModes: ["human", "quiet", "json"],
     human: [{ command: "uninstall [--purge]", summary: "remove the machine installation" }],
-    all: ["uninstall [--purge] [--yes] [--json|--quiet]"],
+    all: ["uninstall [--purge] [--yes] [--allow-root] [--json|--quiet]"],
   },
   {
     id: "top-completions",
@@ -1552,7 +1552,7 @@ export function renderCommandHelp(command: PublicCommand): string {
       `  ${invoke} update --channel preview`,
     ],
     use: [`  ${invoke} use 2.6.2`],
-    uninstall: [`  ${invoke} uninstall`, `  ${invoke} uninstall --purge`],
+    uninstall: [`  ${invoke} uninstall`, `  ${invoke} uninstall --purge`, `  ${invoke} uninstall --allow-root`],
   };
   return [
     descriptions[command],
