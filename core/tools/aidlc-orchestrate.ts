@@ -142,6 +142,7 @@ import {
   type RunStageWaveEntry,
   type ScopeCommandRow,
   type StageValidityAdvisory,
+  bodyRuns,
   numberedOptionLine,
   numberedProseQuestion,
   validateDirective,
@@ -1411,6 +1412,12 @@ function prepareEmission(directive: Directive): PreparedEmission {
     if (line === null) delete directive.narration;
     else directive.narration = line;
   }
+  // The lead's persona rides only where the chat works the stage's body; a gate
+  // shown again, a checkpoint or a wave is set after the step is built, and
+  // lists the file as before.
+  if (directive.kind === "run-stage" && !bodyRuns(directive as unknown as Record<string, unknown>)) {
+    listLeadPersona(directive);
+  }
   // A Code Generation build cut off part way and picked up again: the person
   // hears where it picks up instead of the stage starting over. Otherwise an
   // approved build starts with the plan's own count, from the same reading of
@@ -2219,8 +2226,12 @@ function withParkedReply(directive: Directive): Directive {
       words: cut ? words.slice(0, PARKED_REPLY_MAX_CHARS) : words,
       note: cut ? `${PARKED_REPLY_NOTE}${PARKED_REPLY_CUT_NOTE}` : PARKED_REPLY_NOTE,
     };
-    // A step that still cannot be sent alone goes without it; the record keeps the words.
-    if (Buffer.byteLength(JSON.stringify(directive), "utf-8") > directiveMaxBytes()) delete directive.parked_reply;
+    // Their words outrank the lead's persona text, which the step can list as a
+    // file to read instead. A step that still cannot be sent alone goes without
+    // them; the record keeps the words.
+    const tooBig = (): boolean => Buffer.byteLength(JSON.stringify(directive), "utf-8") > directiveMaxBytes();
+    if (tooBig()) listLeadPersona(directive);
+    if (tooBig()) delete directive.parked_reply;
   } catch (e) {
     recordHookDrop(projectDir, "parked-reply", errorMessage(e));
   }
@@ -5899,7 +5910,7 @@ function unselectedRecordsDigest(selectable: UnselectedRecords["selectable"]): s
 // already holds intents whose active-intent CURSOR is unset. The cursor
 // (`aidlc/spaces/<sp>/intents/active-intent`) is gitignored per-user state, so a
 // fresh clone of a >1-intent workspace lands with records on disk but no cursor
-// → activeIntent() returns null (lib:357-361) → stateContent is empty → the
+// → activeIntent() returns null → stateContent is empty → the
 // creation gate would mint a SECOND intent over the top of the existing ones
 // (violates the P4 hazard "auto-create fires only on ZERO intents").
 //
@@ -6468,8 +6479,7 @@ function scopeDefaultSkeletonStance(scope: string): SkeletonStance {
 // conductor's classified stance is in hand. The round-trip's whole point is to
 // turn "unresolved" into a DETERMINED boolean; this function is that resolution.
 //
-// The faithful answer (SKILL.md:655-720 — the per-Bolt steps + the walking-
-// skeleton section) is that the FIRST construction stage gates in every stance.
+// The faithful answer is that the FIRST construction stage gates in every stance.
 // Both skeleton-on AND skeleton-off present a gate at Bolt 1: skeleton-on forces
 // an always-gate "regardless of Construction Autonomy Mode" (SKILL.md Step 5 /
 // "When skeleton-on" §1); skeleton-off runs Bolt 1 "as a regular Bolt with the
@@ -6528,14 +6538,14 @@ function resolveSkeletonGate(stance: SkeletonStance, scope: string): boolean {
 // paths at emit time and never asks the conductor to re-derive them. This is
 // pure deterministic string-building — the textbook tool job (the engine design:
 // "computes the paths ... routing string-building to an LLM would invert the
-// whole thesis"). The mapping is documented at
-// docs/reference/16-artifact-vocabulary.md:144-167.
+// whole thesis"). The mapping is documented in
+// docs/reference/16-artifact-vocabulary.md, "Filesystem mapping".
 
 // The literal token used in the per-unit path shape when no concrete Unit of
 // Work is supplied at emit time. The unit value comes from active Bolt context
 // (a later engine increment threads it in); when absent, the faithful emission
 // is the documented `{unit-name}` placeholder shape, matching
-// 16-artifact-vocabulary.md:159.
+// 16-artifact-vocabulary.md, "Filesystem mapping".
 const UNIT_NAME_PLACEHOLDER = "{unit-name}";
 
 // True when the node runs once per Unit of Work. The marker + known-set rule
@@ -6697,7 +6707,7 @@ function projectTypeFrom(
 
 // Resolve a node's consumes[] to canonical paths, dropping conditional_on
 // entries that don't match the project type. The drop guard mirrors the verbatim
-// idiom in aidlc-graph.ts:733-739 (validateScope): an entry conditional on a
+// idiom in aidlc-graph.ts validateScope: an entry conditional on a
 // project type other than the workflow's is excluded. When projectType is null
 // (no state / unset field) the filter is a no-op — every entry is kept and
 // resolved, matching the prose orchestrator's "list everything when type is
@@ -6967,8 +6977,9 @@ function inlineContextEntries(
   const shipped = shippedInlineContextEntries(node, harnessRoot, harnessDir(), warnings, depth);
   // The project's own knowledge comes right after the personas, before the
   // shipped knowledge: it is the team's word for this work, an agent reading
-  // the roster in order reaches it second, and the roster cap trims shipped
-  // knowledge before it.
+  // the roster in order reaches it right after the personas (first, when the
+  // step carries the lead's persona and lists no support), and the roster cap
+  // trims shipped knowledge before it.
   let personas = 0;
   while (personas < shipped.length && shipped[personas].persona) personas++;
   const entries: InlineContextEntry[] = shipped.slice(0, personas);
@@ -7014,14 +7025,26 @@ function inlineContextRoster(
   node: GraphStage,
   codekbCtx?: CodekbCtx,
   depth: string | null = null,
-): { paths: string[]; warnings: string[] } {
+): { paths: string[]; warnings: string[]; lead: InlineContextEntry | null } {
   const warnings: string[] = [];
-  const allPaths = inlineContextEntries(node, codekbCtx, warnings, depth).map((e) => e.rel);
-  const { paths, omitted } = capInlineContextPaths(allPaths);
+  const entries = inlineContextEntries(node, codekbCtx, warnings, depth);
+  const { paths, omitted } = capInlineContextPaths(entries.map((e) => e.rel));
   // The person reads this line (the skill shows context warnings as written),
   // so it is about their work: no field name, no byte cap.
   if (omitted > 0) warnings.push(omittedContextWarning(omitted));
-  return { paths, warnings: boundedContextWarnings(warnings) };
+  // The lead's persona, first on the list, which the step carries itself
+  // when it can (lead_persona).
+  const lead = entries.find((e) => e.persona === true && e.agent === node.lead_agent) ?? null;
+  return { paths, warnings: boundedContextWarnings(warnings), lead: lead !== null && paths[0] === lead.rel ? lead : null };
+}
+
+// A step that does not carry the lead's persona lists its file first again,
+// where the roster had it, for the agent to read as before.
+function listLeadPersona(directive: RunStageDirective): void {
+  const lead = directive.lead_persona;
+  if (lead === undefined) return;
+  delete directive.lead_persona;
+  directive.inline_context_paths = [lead.path, ...directive.inline_context_paths];
 }
 
 function boundedContextWarnings(warnings: string[]): string[] {
@@ -7127,8 +7150,8 @@ function buildRunStageDirective(
   // The collaborators the stage ACTUALLY gets this run: the one switch owner.
   // Empty when the `collaborators` ceremony is off for this scope, which makes
   // the stage run lead-only on every topology (dispatch, gate, and promotion
-  // all read the same answer, so they can never disagree), and the inline
-  // roster then carries only the lead's persona and knowledge.
+  // all read the same answer, so they can never disagree), and the step then
+  // carries only the lead's persona and lists only the lead's knowledge.
   const effectiveSupports = effectiveSupportAgents(node, scope, stateContent);
   const inlineContext = inlineContextRoster({ ...node, support_agents: effectiveSupports }, codekbCtx, depth);
   const ruleEntries = codekbCtx
@@ -7217,6 +7240,17 @@ function buildRunStageDirective(
   }
   if (inlineContext.warnings.length > 0) {
     directive.context_warnings = inlineContext.warnings;
+  }
+  // The lead's persona rides in the step, so no read has to come before it.
+  // A file that became unreadable since the roster checked it stays listed.
+  if (inlineContext.lead !== null) {
+    try {
+      const text = readFileSync(inlineContext.lead.abs, "utf-8");
+      directive.inline_context_paths = inlineContext.paths.slice(1);
+      directive.lead_persona = { path: inlineContext.lead.rel, text };
+    } catch {
+      // Listed as before.
+    }
   }
   if (absent.length > 0) directive.consumes_absent = absent;
   // next_stage: the display name of the in-scope stage that follows this one, so
@@ -7654,6 +7688,20 @@ function personaSentAhead(directive: RunStageDirective): string | null {
     : null;
 }
 
+// The lead's persona rides in the run-stage itself, never on a rules part. When
+// the step would not fit with it even after its rules and the conductor persona
+// go ahead, the step lists the persona file to read instead, as it did before
+// the step carried it: a persona grown past what the host shows of one result
+// still leaves a step the person can go on with. Decided before the directive
+// digest, from the step alone, so every call of one delivery decides the same.
+function listLeadPersonaUnlessItFits(directive: RunStageDirective): void {
+  if (directive.lead_persona === undefined) return;
+  const { conductor_persona: _sentAhead, ...alone } = directive;
+  if (Buffer.byteLength(JSON.stringify(alone), "utf-8") > directiveMaxBytes() - INLINE_RULES_MARGIN_BYTES) {
+    listLeadPersona(directive);
+  }
+}
+
 // One load-steering part: the receipt and ready command first, so a host that
 // cuts long output still keeps them, then the persona on the part that carries
 // it, then the rule text.
@@ -7943,6 +7991,7 @@ function transportRunStage(
     held,
     persona: directive.conductor_persona === undefined ? null : sha256(directive.conductor_persona),
   };
+  listLeadPersonaUnlessItFits(directive);
   const directiveHash = sha256(JSON.stringify(directive));
   const persona = personaSentAhead(directive);
   if (persona !== null) delete directive.conductor_persona;
@@ -9002,9 +9051,7 @@ function routeNext(agentArgs: string[], projectDir: string | undefined): void {
 
   pruneQuestions();
 
-  // Branch 2 — mutually-exclusive --stage + --phase (SKILL.md step 6). The
-  // message is VERBATIM from SKILL.md:120 so the prose and the engine emit the
-  // same user-facing text.
+  // Branch 2: --stage and --phase together are an error.
   if (flags.stage && flags.phase) {
     emit(errorDirective(
       "Cannot use --stage and --phase together. Use one or the other.",
@@ -9334,8 +9381,8 @@ function routeNext(agentArgs: string[], projectDir: string | undefined): void {
   // ladder (Wave-1 audit finding 4). Without this, `next --scope bogus` over a
   // valid-scope workflow silently runs the current stage — the resolved scope is
   // the (valid) state scope, so the unknown-scope check below never sees the
-  // bogus flag. The prose orchestrator errors unconditionally (SKILL.md:110), so
-  // we mirror that with the SAME wording the no-state path already emits. A VALID
+  // bogus flag. So an unknown --scope errors unconditionally, with the SAME
+  // wording the no-state path already emits. A VALID
   // `--scope` that differs from the state scope is a legitimate scope-change and
   // passes this check, reaching Branch 5 below; a valid same-as-state flag is a
   // no-op that falls through to the happy path.
@@ -9352,7 +9399,7 @@ function routeNext(agentArgs: string[], projectDir: string | undefined): void {
   // Shell out to `resolve-env-scope` (a pure read) and relay its VERBATIM
   // `Invalid AWS_AIDLC_DEFAULT_SCOPE "...". Valid scopes: ...` on a non-zero
   // exit — do NOT reconstruct it via validScopes(), which would drift from the
-  // string downstream tests + SKILL.md:101 assert on. This precedes the generic
+  // string downstream tests assert on. This precedes the generic
   // unknown-scope check so the env-specific wording wins for the env source.
   if (source === "env") {
     const run = runTool("aidlc-utility.ts", ["resolve-env-scope"]);
@@ -9731,7 +9778,7 @@ function routeNext(agentArgs: string[], projectDir: string | undefined): void {
   // Branch 7 — explicit --phase / --stage jump. The conductor relays the
   // human's jump target; the engine SUPPLIES the resolved direction by shelling
   // out to `aidlc-jump.ts resolve` (a pure read) rather than re-deriving the
-  // SKILL.md:191-193 forward/backward/redo comparison by hand. resolve also
+  // forward/backward/redo comparison by hand. resolve also
   // owns the in-scope SKIP check: it marks a skipped --stage target, which the
   // jump puts back on the plan first (see skippedJumpDirective).
   // On success we surface the run-stage directive for the resolved target,
@@ -9811,7 +9858,7 @@ function routeNext(agentArgs: string[], projectDir: string | undefined): void {
     return;
   }
 
-  // Branch 8 - freeform intent with no workflow yet (SKILL.md:355-362). The
+  // Branch 8 - freeform intent with no workflow yet. The
   // user described what to build in prose rather than naming a scope. `next`
   // stays read-only and surfaces the routing question as an `ask` - the engine
   // never calls AskUserQuestion itself. A bare KNOWN-SCOPE positional was
@@ -14098,10 +14145,10 @@ function skippedJumpDirective(target: string, direction: string, current: string
 // resolved facts. It shells out to `aidlc-jump.ts resolve` (a pure read) —
 // that handler both checks the target against the plan (a --stage target the
 // plan skips comes back marked `target_skipped`, a --phase with no planned
-// stage is refused) AND computes the forward/backward/redo direction at
-// aidlc-jump.ts:142-145. We relay a rejection verbatim and, on success, compose
+// stage is refused) AND computes the forward/backward/redo direction
+// (aidlc-jump.ts handleResolve). We relay a rejection verbatim and, on success, compose
 // the `execute` command with the tool's own `target_slug` + `direction`.
-// Re-deriving the SKILL.md:191-193 comparison by hand would be an LLM-shaped
+// Re-deriving that comparison by hand would be an LLM-shaped
 // move; delegating it to the tool is the deterministic one.
 //
 // resolve REQUIRES a state file (it reads `Current Stage` to anchor the
@@ -14302,7 +14349,7 @@ function emitJumpDirective(
 }
 
 // Pull `target_slug` AND `direction` out of `aidlc-jump.ts resolve`'s stdout
-// JSON. resolve emits both fields (aidlc-jump.ts:168-180) — the engine needs
+// JSON. resolve emits both fields (aidlc-jump.ts handleResolve); the engine needs
 // the slug to name the target and the direction to compose the `execute` commit
 // directive (forward marks intervening stages [S]; backward resets downstream;
 // redo resets only the target). Returns null when the payload is unparseable or
