@@ -64,6 +64,7 @@ provider setup, trust prompts, project refreshes, and the first workflow.
 | Cursor | [AI-DLC on Cursor](guide/harnesses/cursor.md) |
 | opencode | [AI-DLC on opencode](guide/harnesses/opencode.md) |
 | GitHub Copilot | [AI-DLC on GitHub Copilot](guide/harnesses/copilot.md) |
+| ZCode | [AI-DLC on ZCode](guide/harnesses/zcode.md) |
 
 ## Choose Your Guide
 

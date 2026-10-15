@@ -295,7 +295,7 @@ Without `--harness`, it stops before writing anything:
 
 ```text
 $ aidlc config < /dev/null
-error: multiple harnesses are installed; pass --harness <claude|codex|copilot|cursor|kiro|kiro-ide|opencode>
+error: multiple harnesses are installed; pass --harness <claude|codex|copilot|cursor|kiro|kiro-ide|opencode|zcode>
 fix: aidlc config --harness <name>
 ```
 
@@ -648,6 +648,7 @@ The steps are the same everywhere; these differ:
 | Cursor | `cursor` | Open Cursor or run `agent` | `/aidlc` |
 | opencode | `opencode` | `opencode` | `/aidlc` |
 | GitHub Copilot CLI / VS Code | `copilot` | Copilot CLI or VS Code | `/aidlc` |
+| ZCode | `zcode` | Open the project in ZCode | `/aidlc` |
 
 After config, complete the one step config names for your tool:
 
@@ -660,6 +661,7 @@ After config, complete the one step config names for your tool:
 | Cursor | Open the configured project or run `agent` |
 | opencode | Start `opencode` in the project |
 | GitHub Copilot | Trust the project folder |
+| ZCode | Fully restart ZCode in the folder (it loads hooks at session start only), then approve the workspace hook trust prompt |
 
 The welcome message is Claude Code's alone. AI-DLC draws its own status line
 on Claude Code; on Codex, setup offers Codex's built-in status line, with the

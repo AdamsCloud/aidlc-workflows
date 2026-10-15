@@ -19,8 +19,9 @@ Onboarding is installed in each harness's native instruction surface:
 | Cursor | `.cursor/rules/aidlc-onboarding.mdc` |
 | opencode | `.aidlc/onboarding.md` |
 | GitHub Copilot | Root `AGENTS.md` (full onboarding, including method imports) |
+| ZCode | Root `AGENTS.md` (neutral block) + `.zcode/onboarding.md` (native setup) |
 
-Kiro, Kiro IDE, Codex, Cursor, and opencode share a harness-neutral root
+Kiro, Kiro IDE, Codex, Cursor, opencode, and ZCode share a harness-neutral root
 `AGENTS.md` block with other installed harnesses. Their native setup stays in
 the files above. Copilot's full root block remains exclusive; distinct harnesses
 also need distinct engine directories to coexist.
@@ -59,6 +60,7 @@ Pick your harness:
 | **Cursor** | `/aidlc` | [AI-DLC on Cursor](cursor.md) — one tree for the Cursor IDE and CLI, native subagents and skills, the hooks.json adapter, what's different on Cursor. |
 | **opencode** (≥ 1.17) | `/aidlc` | [AI-DLC on opencode](opencode.md) — the split `.aidlc/` + `.opencode/` layout, the adapter plugin, what's different on opencode. |
 | **GitHub Copilot** (CLI ≥ 1.0.74 / VS Code ≥ 1.130) | `/aidlc` | [AI-DLC on GitHub Copilot](copilot.md) — one install for both surfaces, the `.github/` merge, folder trust, what's different on Copilot. |
+| **ZCode** (Z.ai desktop app) | `/aidlc` | [AI-DLC on ZCode](zcode.md) — hooks in `.zcode/config.json` routed through the adapter, one-time workspace hook trust, what's different on ZCode. |
 
 AI-DLC on Kiro (IDE or CLI) works best with **Claude Opus 4.8**, which requires a **paid Kiro plan**.
 

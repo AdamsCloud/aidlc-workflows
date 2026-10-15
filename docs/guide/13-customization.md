@@ -10,15 +10,17 @@ AI-DLC is designed to adapt to your team's needs. This chapter covers settings o
 > `.kiro/settings/cli.json` + its agent config; Kiro IDE uses agent Markdown
 > `tools:` and `permissions.rules`. Codex uses `.codex/config.toml`
 > + Starlark rules, Cursor in `.cursor/hooks.json` + `.cursor/cli.json`
-> (permissions only), opencode in the project-root `opencode.json`, and Copilot
+> (permissions only), opencode in the project-root `opencode.json`, Copilot
 > in `.github/hooks/aidlc.json` (hook wiring) + `~/.copilot/config.json`
-> (folder trust) — see
+> (folder trust), and ZCode in the project's `.zcode/config.json` (hook
+> wiring) — see
 > [Running on Kiro CLI](harnesses/kiro-cli.md),
 > [Running on Kiro IDE](harnesses/kiro-ide.md),
 > [Running on Codex CLI](harnesses/codex-cli.md),
 > [AI-DLC on Cursor](harnesses/cursor.md),
-> [AI-DLC on opencode](harnesses/opencode.md), and
-> [AI-DLC on GitHub Copilot](harnesses/copilot.md) for each harness's surfaces.
+> [AI-DLC on opencode](harnesses/opencode.md),
+> [AI-DLC on GitHub Copilot](harnesses/copilot.md), and
+> [AI-DLC on ZCode](harnesses/zcode.md) for each harness's surfaces.
 
 ---
 
