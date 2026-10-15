@@ -3968,6 +3968,11 @@ export async function collectDoctorReport(
       if (currentHarnessName === "copilot") {
         trustFiles.push(join(projectDir, ".github", "hooks", "aidlc.json"));
       }
+      if (currentHarnessName === "zcode") {
+        // ZCode's hook wiring lives in .zcode/config.json hooks.events; the
+        // walker below collects the registered commands from it.
+        trustFiles.push(join(harnessRoot, "config.json"));
+      }
       const agentsDir = join(harnessRoot, "agents");
       const personaCommands: string[] = [];
       if (existsSync(agentsDir)) {
@@ -4055,6 +4060,12 @@ export async function collectDoctorReport(
       } else if (currentHarnessName === "copilot") {
         // Copilot has no project command allowlist. Its folder-trust contract
         // is checked separately below; this row verifies native hook wiring.
+        nativePermission = nativeHooks;
+      } else if (currentHarnessName === "zcode") {
+        // ZCode has no project command allowlist either: hooks run once the
+        // person grants the workspace hook trust (ZCode's own contract, whose
+        // effect shows as the hook heartbeat row), so this row verifies the
+        // native hook wiring the same way Copilot's does.
         nativePermission = nativeHooks;
       } else if (currentHarnessName === "opencode") {
         const configPath = ["opencode.json", "opencode.jsonc"]
@@ -4728,6 +4739,19 @@ export async function collectDoctorReport(
       pass: insideGitRepository(projectDir),
       label: "project is in a git repository (Cursor may skip project hooks outside one)",
       fix: "run `git init` in this project, then fully restart Cursor and trust the folder",
+    });
+  } else if (harness === ".zcode") {
+    // ZCode: the hook wiring and the /aidlc command entry both live inside
+    // .zcode/ (config.json hooks.events + commands/aidlc.md).
+    results.push({
+      pass: existsSync(join(projectDir, ".zcode", "config.json")),
+      label: "config.json present (hooks.events wiring)",
+      fix: projectedFileRepair("zcode", ".zcode/config.json"),
+    });
+    results.push({
+      pass: existsSync(join(projectDir, ".zcode", "commands", "aidlc.md")),
+      label: ".zcode/commands/aidlc.md present (/aidlc entry point)",
+      fix: projectedFileRepair("zcode", ".zcode/commands/aidlc.md"),
     });
   } else if (harness === ".aidlc") {
     // opencode: the wiring config is the project-root opencode.json/jsonc

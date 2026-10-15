@@ -544,6 +544,7 @@ const HOST_LABELS: Readonly<Record<string, string>> = {
   kiro: "Kiro CLI",
   "kiro-ide": "Kiro IDE",
   opencode: "opencode",
+  zcode: "ZCode",
 };
 
 // A limit is a positive whole number; anything else declares none.

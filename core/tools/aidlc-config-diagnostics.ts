@@ -542,7 +542,8 @@ export function readConfigDiagnosticRecords(harnessRoot: string): ConfigDiagnost
     distribution !== "cursor" &&
     distribution !== "kiro" &&
     distribution !== "kiro-ide" &&
-    distribution !== "opencode"
+    distribution !== "opencode" &&
+    distribution !== "zcode"
   ) {
     throw new Error(`${path}: distribution must name a supported harness`);
   }
@@ -933,6 +934,12 @@ const HARNESS_CLI: Record<
     command: "opencode",
     required: true,
     install: "Install opencode and ensure `opencode --version` works.",
+  },
+  // ZCode is a desktop app; its agent CLI (zcode.cjs) ships inside the app and
+  // is not a PATH command an end user runs, so there is nothing to probe.
+  zcode: {
+    required: false,
+    install: "Install the ZCode desktop app and open this folder in it; no CLI is required.",
   },
 };
 

@@ -269,7 +269,8 @@ function harnessKind(harnessDir = runtimeHarnessDir()): PluginInventory["harness
     declared === "kiro-ide" ||
     declared === "cursor" ||
     declared === "copilot" ||
-    declared === "opencode"
+    declared === "opencode" ||
+    declared === "zcode"
   ) {
     return declared === "kiro-ide" ? "kiro" : declared;
   }
