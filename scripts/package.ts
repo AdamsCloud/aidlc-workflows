@@ -1140,6 +1140,9 @@ function rewriteKiroNativeAllowlists(outRoot: string, m: HarnessManifest): void 
 function rewriteClaudeNativePermissions(outRoot: string, m: HarnessManifest): void {
   if (m.tierFlavor !== "claude") return;
   const settingsPath = join(outRoot, m.harnessDir, "settings.json");
+  // Same guard as expandClaudeToolAllows: a claude-flavored harness with no
+  // Claude settings surface (ZCode) ships no permissions file to rewrite.
+  if (!existsSync(settingsPath)) return;
   const value = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
     permissions?: { allow?: unknown };
   };
@@ -1171,6 +1174,9 @@ function rewriteClaudeNativePermissions(outRoot: string, m: HarnessManifest): vo
 function expandClaudeToolAllows(treeRoot: string, m: HarnessManifest): void {
   if (m.tierFlavor !== "claude") return;
   const settingsPath = join(treeRoot, "settings.json");
+  // A claude-flavored harness without a Claude settings surface (ZCode reads
+  // permissions from its own store, not a settings file) has nothing to expand.
+  if (!existsSync(settingsPath)) return;
   const value = JSON.parse(readFileSync(settingsPath, "utf-8")) as { permissions?: { allow?: unknown } };
   const allow = value.permissions?.allow;
   // The authored entries name the tools folder as written (`.claude`), which
@@ -1409,6 +1415,7 @@ function rewriteNativeInvocations(
     "codex-adapter": true,
     "cursor-adapter": true,
     "copilot-adapter": true,
+    "zcode-adapter": true,
   };
   const projectPrefix = String.raw`(?:"?(?:\$\{?CLAUDE_PROJECT_DIR\}?/)?`;
   const suffix = `"?)`;

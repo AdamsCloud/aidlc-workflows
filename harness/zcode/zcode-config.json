@@ -1,0 +1,137 @@
+{
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode session-start",
+              "timeout": 1800
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode record-human-turn",
+              "timeout": 1800
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode fold-usage",
+              "timeout": 1800
+            }
+          ]
+        },
+        {
+          "matcher": "Task|Agent",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode deliver-stage-rules",
+              "timeout": 1800
+            }
+          ]
+        },
+        {
+          "matcher": "Read|NotebookRead|Edit|MultiEdit|Write|NotebookEdit|LS|Glob|Grep|Bash|Task|Agent",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode guard-tool-call",
+              "timeout": 1800
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "matcher": "Write|Edit",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode write-audit-log",
+              "timeout": 1800
+            },
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode run-sensors",
+              "timeout": 3600
+            }
+          ]
+        },
+        {
+          "matcher": "TodoWrite|TaskUpdate",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode sync-workflow-state",
+              "timeout": 1800
+            }
+          ]
+        },
+        {
+          "matcher": "AskUserQuestion",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode record-human-turn",
+              "timeout": 1800
+            }
+          ]
+        },
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode rebuild-stage-graph",
+              "timeout": 1800
+            }
+          ]
+        },
+        {
+          "matcher": "Task|Agent",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode deliver-stage-rules",
+              "timeout": 1800
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode fold-usage",
+              "timeout": 1800
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "{{INVOKE}} engine adapter zcode continue-workflow",
+              "timeout": 3600
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
