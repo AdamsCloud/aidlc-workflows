@@ -1162,6 +1162,40 @@ describe("t221 (c) harness registration and protocol prose", () => {
     }
   });
 
+  test("ZCode config.json wires the reviewer-scope bound through the guard-tool-call group", () => {
+    const harnesses = HARNESS_MATRIX.filter(
+      (harness) => harness.capabilities.reviewerScopeRegistration === "zcode-config",
+    );
+    expect(harnesses.length).toBeGreaterThan(0);
+    for (const harness of harnesses) {
+      const wiring = JSON.parse(
+        readFileSync(join(harness.engineRoot, "config.json"), "utf-8"),
+      ) as {
+        hooks?: Record<
+          string,
+          Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>>
+        >;
+      };
+      const pre = wiring.hooks?.events?.PreToolUse ?? [];
+      // One registration runs the guard group through the adapter; the
+      // reviewer-scope bound is a member of that group, not its own handler.
+      const group = pre.filter((g) =>
+        g.hooks.some(
+          (h) => h.command ===
+            `bun ${harness.manifest.harnessDir}/tools/aidlc.ts engine adapter zcode guard-tool-call`,
+        ),
+      );
+      expect(group, harness.name).toHaveLength(1);
+      // ZCode treats an empty-string matcher as fatal config; the guard group
+      // must carry its own non-empty tool matcher.
+      expect(group[0]?.matcher, harness.name).toBeTruthy();
+      expect(
+        pre.some((g) => g.hooks.some((h) => h.command.endsWith(" adapter zcode reviewer-scope"))),
+        harness.name,
+      ).toBe(false);
+    }
+  });
+
   test("Cursor hooks.json wires the adapter's guards target on preToolUse", () => {
     const harnesses = HARNESS_MATRIX.filter(
       (harness) => harness.capabilities.reviewerScopeRegistration === "cursor-hooks",

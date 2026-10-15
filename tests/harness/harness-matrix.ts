@@ -13,6 +13,7 @@ type ReviewerScopeRegistration =
   | "cursor-hooks"
   | "kiro-agent-json"
   | "opencode-plugin"
+  | "zcode-config"
   | "unsupported";
 
 type HarnessCapabilities = {
@@ -186,6 +187,26 @@ const HARNESS_CAPABILITIES = {
     kiroAgentJson: false,
     ideAgentTools: false,
     reviewerScopeRegistration: "opencode-plugin",
+  },
+  zcode: {
+    harnessDir: ".zcode",
+    onboarding: {
+      mode: "manifest",
+      fills: "onboarding.fills.ts",
+      dist: "AGENTS.md",
+      harnessDist: ".zcode/onboarding.md",
+    },
+    rootFiles: [".gitignore", "AGENTS.md"],
+    skillsRoot: ".zcode/skills",
+    plugin: {
+      kind: "store",
+      manifestDir: ".zcode-plugin",
+      wiringFile: "hooks/hooks.json",
+    },
+    memoryInclude: "claude-import",
+    kiroAgentJson: false,
+    ideAgentTools: false,
+    reviewerScopeRegistration: "zcode-config",
   },
 } as const satisfies Record<string, HarnessCapabilities>;
 
